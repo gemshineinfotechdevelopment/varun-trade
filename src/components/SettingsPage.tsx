@@ -1,0 +1,969 @@
+import React, { useState, useRef, type ChangeEvent, type DragEvent } from 'react';
+import {
+  Box,
+  Typography,
+  Paper,
+  Grid,
+  TextField,
+  Button,
+  Snackbar,
+  Alert,
+  Switch,
+} from '@mui/material';
+import SaveRoundedIcon from '@mui/icons-material/SaveRounded';
+import RestartAltRoundedIcon from '@mui/icons-material/RestartAltRounded';
+import CloudUploadRoundedIcon from '@mui/icons-material/CloudUploadRounded';
+import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
+import BusinessRoundedIcon from '@mui/icons-material/BusinessRounded';
+import PhotoCameraRoundedIcon from '@mui/icons-material/PhotoCameraRounded';
+import PhoneInTalkRoundedIcon from '@mui/icons-material/PhoneInTalkRounded';
+import LocationOnRoundedIcon from '@mui/icons-material/LocationOnRounded';
+import ReceiptLongRoundedIcon from '@mui/icons-material/ReceiptLongRounded';
+import StorefrontRoundedIcon from '@mui/icons-material/StorefrontRounded';
+
+export interface CompanySettings {
+  companyName: string;
+  tagline: string;
+  ownerName: string;
+  phone: string;
+  whatsapp: string;
+  email: string;
+  address: string;
+  city: string;
+  pincode: string;
+  state: string;
+  gstin: string;
+  pan: string;
+  logoUrl?: string;
+  enableTax?: boolean;
+  defaultTaxRate?: string;
+}
+
+export const DEFAULT_COMPANY_SETTINGS: CompanySettings = {
+  companyName: 'Dheeksha Trade Link',
+  tagline: 'Direct Sivakasi Fireworks Manufacturer & Wholesale Supplier',
+  ownerName: 'Siva',
+  phone: '+91 98765 43210',
+  whatsapp: '+91 98765 43210',
+  email: 'dheekshatradelink@gmail.com',
+  address: '124, Sivakasi Main Road, Near Bus Stand',
+  city: 'Sivakasi',
+  pincode: '626123',
+  state: 'Tamil Nadu',
+  gstin: '33AAAAA0000A1Z5',
+  pan: 'AAAAA0000A',
+  logoUrl: '',
+  enableTax: false,
+  defaultTaxRate: '18',
+};
+
+export const removeWhiteBackgroundFromDataUrl = (
+  dataUrl: string,
+  threshold = 225
+): Promise<string> => {
+  return new Promise((resolve) => {
+    if (!dataUrl) {
+      resolve('');
+      return;
+    }
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(dataUrl);
+        return;
+      }
+      ctx.drawImage(img, 0, 0);
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const data = imgData.data;
+
+      let minX = w, minY = h, maxX = 0, maxY = 0;
+      let hasVisiblePixel = false;
+
+      // Make white/near-white pixels transparent and calculate tight bounding box
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const idx = (y * w + x) * 4;
+          const r = data[idx];
+          const g = data[idx + 1];
+          const b = data[idx + 2];
+          const a = data[idx + 3];
+
+          if (a === 0 || (r >= threshold && g >= threshold && b >= threshold)) {
+            data[idx + 3] = 0; // Transparent
+          } else {
+            hasVisiblePixel = true;
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+
+      ctx.putImageData(imgData, 0, 0);
+
+      // Auto-crop to remove empty side paddings so logo sits directly adjacent to text
+      if (hasVisiblePixel && maxX >= minX && maxY >= minY) {
+        const cropW = maxX - minX + 1;
+        const cropH = maxY - minY + 1;
+        const croppedCanvas = document.createElement('canvas');
+        croppedCanvas.width = cropW;
+        croppedCanvas.height = cropH;
+        const cropCtx = croppedCanvas.getContext('2d');
+        if (cropCtx) {
+          cropCtx.drawImage(canvas, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
+          resolve(croppedCanvas.toDataURL('image/png'));
+          return;
+        }
+      }
+
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+};
+
+export const getStoredSettings = (): CompanySettings => {
+  try {
+    const saved = localStorage.getItem('dheeksha_app_settings');
+    if (saved) {
+      return { ...DEFAULT_COMPANY_SETTINGS, ...JSON.parse(saved) };
+    }
+  } catch (err) {
+    console.error('Failed to parse settings from localStorage:', err);
+  }
+  return DEFAULT_COMPANY_SETTINGS;
+};
+
+export const SettingsPage: React.FC = () => {
+  const [settings, setSettings] = useState<CompanySettings>(getStoredSettings);
+  const [isDraggingLogo, setIsDraggingLogo] = useState(false);
+  const [isProcessingLogo, setIsProcessingLogo] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [toast, setToast] = useState<{ open: boolean; message: string; severity: 'success' | 'info' | 'error' }>({
+    open: false,
+    message: '',
+    severity: 'success',
+  });
+
+  const handleChange = <K extends keyof CompanySettings>(field: K, value: CompanySettings[K]) => {
+    setSettings((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+  };
+
+  const handleLogoFile = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      alert('Please upload a valid image file (.png, .jpg, .jpeg, .webp, .svg)');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Logo file size is too large (max 5MB). Please choose a smaller image.');
+      return;
+    }
+
+    setIsProcessingLogo(true);
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const rawDataUrl = e.target?.result as string;
+      if (rawDataUrl) {
+        // Automatically remove white background for transparent branding
+        const transparentDataUrl = await removeWhiteBackgroundFromDataUrl(rawDataUrl);
+        setSettings((prev) => ({ ...prev, logoUrl: transparentDataUrl }));
+        setIsProcessingLogo(false);
+        setToast({
+          open: true,
+          message: '✨ Logo uploaded & white background removed! Click "Save Profile" to apply.',
+          severity: 'success',
+        });
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleManualRemoveWhiteBg = async () => {
+    if (!settings.logoUrl) return;
+    setIsProcessingLogo(true);
+    try {
+      const transparentDataUrl = await removeWhiteBackgroundFromDataUrl(settings.logoUrl);
+      setSettings((prev) => ({ ...prev, logoUrl: transparentDataUrl }));
+      setToast({
+        open: true,
+        message: '✂️ White background removed from logo successfully!',
+        severity: 'success',
+      });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsProcessingLogo(false);
+    }
+  };
+
+  const handleFileInputChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleLogoFile(file);
+    }
+    if (e.target) e.target.value = '';
+  };
+
+  const handleDragOver = (e: DragEvent) => {
+    e.preventDefault();
+    setIsDraggingLogo(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDraggingLogo(false);
+  };
+
+  const handleDrop = (e: DragEvent) => {
+    e.preventDefault();
+    setIsDraggingLogo(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      handleLogoFile(file);
+    }
+  };
+
+  const handleRemoveLogo = () => {
+    setSettings((prev) => ({ ...prev, logoUrl: '' }));
+  };
+
+  const handleSave = () => {
+    try {
+      localStorage.setItem('dheeksha_app_settings', JSON.stringify(settings));
+      window.dispatchEvent(new Event('dheeksha_settings_updated'));
+      setToast({
+        open: true,
+        message: '✅ Company Profile & Logo saved successfully!',
+        severity: 'success',
+      });
+    } catch (err: any) {
+      console.error('Failed to save settings:', err);
+      setToast({
+        open: true,
+        message: '❌ Failed to save settings.',
+        severity: 'error',
+      });
+    }
+  };
+
+  const handleResetToDefault = () => {
+    if (window.confirm('Reset company profile details to default values?')) {
+      setSettings(DEFAULT_COMPANY_SETTINGS);
+      localStorage.setItem('dheeksha_app_settings', JSON.stringify(DEFAULT_COMPANY_SETTINGS));
+      window.dispatchEvent(new Event('dheeksha_settings_updated'));
+      setToast({
+        open: true,
+        message: '🔄 Company profile reset to default.',
+        severity: 'info',
+      });
+    }
+  };
+
+  return (
+    <Box
+      sx={{
+        width: '100%',
+        height: 'calc(100vh - 72px)',
+        px: { xs: 1, sm: 1.5, md: 2 },
+        py: 0.5,
+        boxSizing: 'border-box',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      <Paper
+        elevation={0}
+        sx={{
+          flex: 1,
+          width: '100%',
+          backgroundColor: '#FFFFFF',
+          borderRadius: '14px',
+          border: '1.5px solid #FDE68A',
+          boxShadow: '0 4px 20px -2px rgba(217, 119, 6, 0.08)',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        {/* Festive Crimson & Gold Header Banner */}
+        <Box
+          sx={{
+            background: 'linear-gradient(135deg, #DC2626 0%, #991B1B 100%)',
+            borderBottom: '2px solid #F59E0B',
+            px: { xs: 2, sm: 3 },
+            py: 1.2,
+            display: 'flex',
+            flexDirection: { xs: 'column', sm: 'row' },
+            alignItems: { xs: 'stretch', sm: 'center' },
+            justifyContent: 'space-between',
+            gap: 1.5,
+            minHeight: '56px',
+            flexShrink: 0,
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <Box
+              sx={{
+                width: 38,
+                height: 38,
+                borderRadius: '8px',
+                backgroundColor: 'rgba(255, 255, 255, 0.15)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <BusinessRoundedIcon sx={{ color: '#FEF08A', fontSize: 22 }} />
+            </Box>
+            <Box>
+              <Typography
+                sx={{
+                  color: '#FFFFFF',
+                  fontSize: '18px',
+                  fontWeight: 800,
+                  letterSpacing: '-0.01em',
+                  lineHeight: 1.2,
+                }}
+              >
+                Company Profile & Settings
+              </Typography>
+              <Typography sx={{ color: '#FEF08A', fontSize: '11.5px', fontWeight: 600 }}>
+                Configure store identity, logo upload, and bill invoice header details
+              </Typography>
+            </Box>
+          </Box>
+
+          {/* Actions */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <Button
+              variant="outlined"
+              onClick={handleResetToDefault}
+              startIcon={<RestartAltRoundedIcon sx={{ fontSize: 18 }} />}
+              sx={{
+                color: '#FEF08A',
+                borderColor: 'rgba(254, 240, 138, 0.5)',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontWeight: 700,
+                textTransform: 'none',
+                px: 2,
+                height: '36px',
+                '&:hover': {
+                  borderColor: '#FEF08A',
+                  backgroundColor: 'rgba(255, 255, 255, 0.12)',
+                },
+              }}
+            >
+              Reset to Default
+            </Button>
+
+            <Button
+              variant="contained"
+              disableElevation
+              onClick={handleSave}
+              startIcon={<SaveRoundedIcon sx={{ fontSize: 18 }} />}
+              sx={{
+                backgroundColor: '#FFFFFF',
+                color: '#B91C1C',
+                border: '1.5px solid #FDE68A',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontWeight: 800,
+                textTransform: 'none',
+                px: 2.5,
+                height: '36px',
+                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
+                '&:hover': {
+                  backgroundColor: '#FFFBEB',
+                },
+              }}
+            >
+              Save Profile
+            </Button>
+          </Box>
+        </Box>
+
+        {/* Content Body: Split Left & Right filling full available height */}
+        <Box
+          sx={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: { xs: 'column', md: 'row' },
+            overflow: 'hidden',
+            backgroundColor: '#FEFDF9',
+          }}
+        >
+          {/* Left Panel: Logo & Brand Identity (Full Height Scrollable) */}
+          <Box
+            sx={{
+              width: { xs: '100%', md: '340px', lg: '380px' },
+              borderRight: { xs: 'none', md: '1.5px solid #FDE68A' },
+              borderBottom: { xs: '1.5px solid #FDE68A', md: 'none' },
+              p: 2.5,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 2,
+              overflowY: 'auto',
+              backgroundColor: '#FFFFFF',
+              boxSizing: 'border-box',
+              flexShrink: 0,
+            }}
+          >
+            {/* Logo Card */}
+            <Box
+              sx={{
+                p: 2,
+                borderRadius: '12px',
+                border: '1.5px solid #FDE68A',
+                backgroundColor: '#FFFDF7',
+                textAlign: 'center',
+              }}
+            >
+              <Typography sx={{ fontSize: '15px', fontWeight: 800, color: '#991B1B', mb: 0.3 }}>
+                Company Logo
+              </Typography>
+              <Typography sx={{ fontSize: '11.5px', color: '#786C58', mb: 1.5 }}>
+                Displayed on top navigation and printed invoices
+              </Typography>
+
+              {/* Hidden File Input */}
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={handleFileInputChange}
+              />
+
+              {/* Logo Display / Drop Zone */}
+              <Box
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                sx={{
+                  width: '100%',
+                  height: '170px',
+                  borderRadius: '10px',
+                  border: isDraggingLogo
+                    ? '2.5px dashed #DC2626'
+                    : settings.logoUrl
+                    ? '1.5px solid #FDE68A'
+                    : '2px dashed #D97706',
+                  backgroundColor: isDraggingLogo ? '#FEF2F2' : settings.logoUrl ? '#FFFFFF' : '#FFFBEB',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  p: 1.5,
+                  boxSizing: 'border-box',
+                  position: 'relative',
+                  transition: 'all 0.2s ease',
+                  '&:hover': {
+                    borderColor: '#DC2626',
+                    backgroundColor: '#FFF5F5',
+                  },
+                }}
+              >
+                {settings.logoUrl ? (
+                  <Box
+                    component="img"
+                    src={settings.logoUrl}
+                    alt="Company Logo"
+                    sx={{
+                      maxWidth: '100%',
+                      maxHeight: '100%',
+                      objectFit: 'contain',
+                      borderRadius: '6px',
+                    }}
+                  />
+                ) : (
+                  <>
+                    <Box
+                      sx={{
+                        width: 48,
+                        height: 48,
+                        borderRadius: '50%',
+                        backgroundColor: '#FEF3C7',
+                        color: '#B91C1C',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        mb: 1,
+                        border: '1px solid #FDE68A',
+                      }}
+                    >
+                      <PhotoCameraRoundedIcon sx={{ fontSize: 26 }} />
+                    </Box>
+                    <Typography sx={{ fontSize: '12.5px', fontWeight: 700, color: '#78350F' }}>
+                      Click or Drag Logo Image
+                    </Typography>
+                    <Typography sx={{ fontSize: '11px', color: '#92400E', mt: 0.3 }}>
+                      PNG, JPG, SVG or WEBP (Max 5MB)
+                    </Typography>
+                  </>
+                )}
+              </Box>
+
+              {/* Logo Action Buttons */}
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1.5, width: '100%', justifyContent: 'center' }}>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => fileInputRef.current?.click()}
+                  startIcon={<CloudUploadRoundedIcon sx={{ fontSize: 16 }} />}
+                  sx={{
+                    borderColor: '#FDE68A',
+                    color: '#991B1B',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    textTransform: 'none',
+                    borderRadius: '8px',
+                    '&:hover': { borderColor: '#DC2626', backgroundColor: '#FFFBEB' },
+                  }}
+                >
+                  {settings.logoUrl ? 'Change' : 'Upload Logo'}
+                </Button>
+
+                {settings.logoUrl && (
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={handleManualRemoveWhiteBg}
+                    disabled={isProcessingLogo}
+                    sx={{
+                      borderColor: '#F59E0B',
+                      color: '#B45309',
+                      backgroundColor: '#FEF3C7',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      textTransform: 'none',
+                      borderRadius: '8px',
+                      '&:hover': { backgroundColor: '#FDE68A', borderColor: '#D97706' },
+                    }}
+                  >
+                    {isProcessingLogo ? 'Processing...' : '✨ Remove White BG'}
+                  </Button>
+                )}
+
+                {settings.logoUrl && (
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    color="error"
+                    onClick={handleRemoveLogo}
+                    startIcon={<DeleteOutlineRoundedIcon sx={{ fontSize: 16 }} />}
+                    sx={{
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      textTransform: 'none',
+                      borderRadius: '8px',
+                    }}
+                  >
+                    Remove
+                  </Button>
+                )}
+              </Box>
+            </Box>
+
+            {/* Live Invoice Header Preview */}
+            <Box
+              sx={{
+                p: 2,
+                borderRadius: '12px',
+                border: '1px solid #E2E8F0',
+                backgroundColor: '#F8FAFC',
+                textAlign: 'left',
+              }}
+            >
+              <Typography sx={{ fontSize: '11px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', mb: 1 }}>
+                Live Invoice Header Preview
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, mb: 1 }}>
+                {settings.logoUrl ? (
+                  <Box
+                    component="img"
+                    src={settings.logoUrl}
+                    alt="Logo"
+                    sx={{ width: 38, height: 38, objectFit: 'contain', borderRadius: '6px' }}
+                  />
+                ) : (
+                  <Box
+                    sx={{
+                      width: 38,
+                      height: 38,
+                      borderRadius: '6px',
+                      backgroundColor: '#DC2626',
+                      color: '#FEF08A',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontWeight: 800,
+                      fontSize: '16px',
+                    }}
+                  >
+                    {settings.companyName.charAt(0) || 'D'}
+                  </Box>
+                )}
+                <Box sx={{ minWidth: 0, flex: 1 }}>
+                  <Typography noWrap sx={{ fontSize: '14px', fontWeight: 800, color: '#1F1714', lineHeight: 1.1 }}>
+                    {settings.companyName || 'Company Name'}
+                  </Typography>
+                  <Typography noWrap sx={{ fontSize: '11px', color: '#64748B', fontWeight: 600 }}>
+                    {settings.city || 'Sivakasi'}{settings.state ? `, ${settings.state}` : ''}
+                  </Typography>
+                </Box>
+              </Box>
+              {settings.tagline && (
+                <Typography sx={{ fontSize: '11px', color: '#64748B', fontStyle: 'italic', mb: 0.5 }}>
+                  "{settings.tagline}"
+                </Typography>
+              )}
+              <Typography sx={{ fontSize: '11px', color: '#475569', fontWeight: 600 }}>
+                GSTIN: {settings.gstin || 'Not specified'}
+              </Typography>
+            </Box>
+
+            {/* Quick Status Info */}
+            <Box
+              sx={{
+                p: 1.5,
+                borderRadius: '10px',
+                backgroundColor: '#FFFBEB',
+                border: '1px solid #FDE68A',
+              }}
+            >
+              <Typography sx={{ fontSize: '12px', fontWeight: 700, color: '#92400E', mb: 0.5 }}>
+                ⚡ Auto-Sync Active
+              </Typography>
+              <Typography sx={{ fontSize: '11px', color: '#B45309', lineHeight: 1.4 }}>
+                Changes saved here will automatically update the Navbar branding, Estimates, and Invoice Bill Print templates.
+              </Typography>
+            </Box>
+          </Box>
+
+          {/* Right Panel: Full Profile Forms (Scrollable, Full-Height) */}
+          <Box
+            sx={{
+              flex: 1,
+              p: { xs: 2, sm: 3 },
+              overflowY: 'auto',
+              boxSizing: 'border-box',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 2.5,
+            }}
+          >
+            {/* Section 1: Store & Company Details */}
+            <Paper
+              elevation={0}
+              sx={{
+                p: 2.5,
+                borderRadius: '12px',
+                border: '1px solid #FDE68A',
+                backgroundColor: '#FFFFFF',
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <StorefrontRoundedIcon sx={{ color: '#DC2626', fontSize: 20 }} />
+                <Typography sx={{ fontSize: '15px', fontWeight: 800, color: '#991B1B' }}>
+                  Store & Business Identity
+                </Typography>
+              </Box>
+
+              <Grid container spacing={2}>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Company / Store Name *"
+                    value={settings.companyName}
+                    onChange={(e) => handleChange('companyName', e.target.value)}
+                    placeholder="e.g. Dheeksha Trade Link"
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Tagline / Description"
+                    value={settings.tagline}
+                    onChange={(e) => handleChange('tagline', e.target.value)}
+                    placeholder="e.g. Sivakasi Fireworks Manufacturer & Wholesale"
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Owner / Contact Person"
+                    value={settings.ownerName}
+                    onChange={(e) => handleChange('ownerName', e.target.value)}
+                    placeholder="e.g. Siva"
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Email Address"
+                    value={settings.email}
+                    onChange={(e) => handleChange('email', e.target.value)}
+                    placeholder="e.g. dheekshatradelink@gmail.com"
+                  />
+                </Grid>
+              </Grid>
+            </Paper>
+
+            {/* Section 2: Contact & Phone Details */}
+            <Paper
+              elevation={0}
+              sx={{
+                p: 2.5,
+                borderRadius: '12px',
+                border: '1px solid #FDE68A',
+                backgroundColor: '#FFFFFF',
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <PhoneInTalkRoundedIcon sx={{ color: '#D97706', fontSize: 20 }} />
+                <Typography sx={{ fontSize: '15px', fontWeight: 800, color: '#92400E' }}>
+                  Contact Numbers & WhatsApp
+                </Typography>
+              </Box>
+
+              <Grid container spacing={2}>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Primary Phone Number *"
+                    value={settings.phone}
+                    onChange={(e) => handleChange('phone', e.target.value)}
+                    placeholder="e.g. +91 98765 43210"
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="WhatsApp Number"
+                    value={settings.whatsapp}
+                    onChange={(e) => handleChange('whatsapp', e.target.value)}
+                    placeholder="e.g. +91 98765 43210"
+                  />
+                </Grid>
+              </Grid>
+            </Paper>
+
+            {/* Section 3: Physical Address & Location */}
+            <Paper
+              elevation={0}
+              sx={{
+                p: 2.5,
+                borderRadius: '12px',
+                border: '1px solid #FDE68A',
+                backgroundColor: '#FFFFFF',
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <LocationOnRoundedIcon sx={{ color: '#16A34A', fontSize: 20 }} />
+                <Typography sx={{ fontSize: '15px', fontWeight: 800, color: '#166534' }}>
+                  Store Location & Postal Address
+                </Typography>
+              </Box>
+
+              <Grid container spacing={2}>
+                <Grid size={{ xs: 12 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Street Address / Location *"
+                    value={settings.address}
+                    onChange={(e) => handleChange('address', e.target.value)}
+                    placeholder="e.g. 124, Sivakasi Main Road, Near Bus Stand"
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 4 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="City *"
+                    value={settings.city}
+                    onChange={(e) => handleChange('city', e.target.value)}
+                    placeholder="e.g. Sivakasi"
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 4 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="State *"
+                    value={settings.state}
+                    onChange={(e) => handleChange('state', e.target.value)}
+                    placeholder="e.g. Tamil Nadu"
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 4 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="Pincode"
+                    value={settings.pincode}
+                    onChange={(e) => handleChange('pincode', e.target.value)}
+                    placeholder="e.g. 626123"
+                  />
+                </Grid>
+              </Grid>
+            </Paper>
+
+            {/* Section 4: GSTIN & Tax Identification */}
+            <Paper
+              elevation={0}
+              sx={{
+                p: 2.5,
+                borderRadius: '12px',
+                border: '1px solid #FDE68A',
+                backgroundColor: '#FFFFFF',
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2, flexWrap: 'wrap', gap: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <ReceiptLongRoundedIcon sx={{ color: '#2563EB', fontSize: 20 }} />
+                  <Typography sx={{ fontSize: '15px', fontWeight: 800, color: '#1E40AF' }}>
+                    Tax & Legal Registration
+                  </Typography>
+                </Box>
+
+                {/* Tax / GST Toggle Button */}
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1.2,
+                    backgroundColor: settings.enableTax ? '#EFF6FF' : '#F8FAFC',
+                    border: settings.enableTax ? '1.5px solid #93C5FD' : '1px solid #E2E8F0',
+                    px: 1.5,
+                    py: 0.5,
+                    borderRadius: '20px',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <Typography sx={{ fontSize: '13px', fontWeight: 700, color: settings.enableTax ? '#1D4ED8' : '#64748B' }}>
+                    {settings.enableTax ? 'Tax / GST: ON' : 'Tax / GST: OFF'}
+                  </Typography>
+                  <Switch
+                    checked={Boolean(settings.enableTax)}
+                    onChange={(e) => handleChange('enableTax', e.target.checked)}
+                    color="primary"
+                    size="small"
+                  />
+                </Box>
+              </Box>
+
+              <Typography sx={{ fontSize: '12px', color: '#64748B', mb: 2 }}>
+                {settings.enableTax
+                  ? 'Tax calculation is ENABLED. Tax / GST percentage will be displayed and applied during billing.'
+                  : 'Tax calculation is DISABLED. Tax / GST field will be hidden from billing.'}
+              </Typography>
+
+              <Grid container spacing={2}>
+                {/* When Tax Toggle is ON, show Default Tax Rate field */}
+                {settings.enableTax && (
+                  <Grid size={{ xs: 12 }}>
+                    <Box
+                      sx={{
+                        p: 2,
+                        borderRadius: '10px',
+                        backgroundColor: '#EFF6FF',
+                        border: '1px dashed #93C5FD',
+                        mb: 1,
+                      }}
+                    >
+                      <Typography sx={{ fontSize: '13px', fontWeight: 700, color: '#1E40AF', mb: 1 }}>
+                        Default GST / Tax Rate (%)
+                      </Typography>
+                      <TextField
+                        size="small"
+                        value={settings.defaultTaxRate || ''}
+                        onChange={(e) => handleChange('defaultTaxRate', e.target.value)}
+                        placeholder="e.g. 18 or 5"
+                        sx={{
+                          maxWidth: '260px',
+                          backgroundColor: '#FFFFFF',
+                          '& .MuiInputBase-input': { fontWeight: 700, color: '#1D4ED8', fontSize: '14px' },
+                        }}
+                      />
+                      <Typography sx={{ fontSize: '11.5px', color: '#3B82F6', mt: 0.8 }}>
+                        This tax percentage will automatically apply as the default tax rate in the billing page.
+                      </Typography>
+                    </Box>
+                  </Grid>
+                )}
+
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="GSTIN Number"
+                    value={settings.gstin}
+                    onChange={(e) => handleChange('gstin', e.target.value.toUpperCase())}
+                    placeholder="e.g. 33AAAAA0000A1Z5"
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="PAN Number"
+                    value={settings.pan}
+                    onChange={(e) => handleChange('pan', e.target.value.toUpperCase())}
+                    placeholder="e.g. AAAAA0000A"
+                  />
+                </Grid>
+              </Grid>
+            </Paper>
+          </Box>
+        </Box>
+      </Paper>
+
+      {/* Snackbar Feedback */}
+      <Snackbar
+        open={toast.open}
+        autoHideDuration={4000}
+        onClose={() => setToast((prev) => ({ ...prev, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+      >
+        <Alert
+          onClose={() => setToast((prev) => ({ ...prev, open: false }))}
+          severity={toast.severity}
+          sx={{ width: '100%', fontWeight: 700, borderRadius: '10px' }}
+        >
+          {toast.message}
+        </Alert>
+      </Snackbar>
+    </Box>
+  );
+};

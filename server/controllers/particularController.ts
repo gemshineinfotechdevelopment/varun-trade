@@ -1,15 +1,30 @@
 import type { Request, Response, NextFunction } from 'express';
 import { Particular } from '../models/Particular';
 import { AccountLedger } from '../models/AccountLedger';
+import { Product } from '../models/Product';
+import { PriceListType } from '../models/PriceList';
 import { escapeRegex, recalculateCustomerBalance } from '../utils/ledgerUtils';
+import { validateAndCalculateCart } from '../services/pricingService';
 import { isCloudinaryConfigured, uploadToCloudinary, deleteFromCloudinary } from '../config/cloudinary';
 
 export const getParticulars = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { customerName } = req.query;
+    const { customerName, pricingMode, priceListType, startDate, endDate } = req.query;
     const filter: any = {};
+
     if (customerName && typeof customerName === 'string' && customerName.trim() !== '' && customerName.toLowerCase() !== 'all') {
       filter.customerName = { $regex: new RegExp(`^${escapeRegex(customerName.trim())}$`, 'i') };
+    }
+
+    const targetType = priceListType || pricingMode;
+    if (targetType && typeof targetType === 'string' && targetType !== 'ALL') {
+      filter.priceListType = targetType.toUpperCase() === 'CUSTOM' ? 'CUSTOM' : '90_PERCENT';
+    }
+
+    if (startDate || endDate) {
+      filter.date = {};
+      if (startDate) filter.date.$gte = String(startDate);
+      if (endDate) filter.date.$lte = String(endDate);
     }
 
     const particulars = await Particular.find(filter).sort({ createdAt: -1, _id: -1 });
@@ -61,6 +76,9 @@ export const createParticular = async (req: Request, res: Response, next: NextFu
       customerGst,
       caseCount,
       companyName,
+      pricingMode,
+      priceListType = '90_PERCENT',
+      customDiscountPercent,
       discount,
       transport,
       packing,
@@ -73,8 +91,18 @@ export const createParticular = async (req: Request, res: Response, next: NextFu
       paidAmount,
       notes,
       date,
-      products,
+      products = [],
     } = req.body;
+
+    const rawType = priceListType || pricingMode || '90_PERCENT';
+    const targetType: PriceListType = String(rawType).toUpperCase() === 'CUSTOM' ? 'CUSTOM' : '90_PERCENT';
+
+    // Backend validation against PriceList records
+    const cartValidation = await validateAndCalculateCart(
+      products,
+      targetType,
+      false // non-blocking stock check
+    );
 
     let finalBillNo = billNo ? String(billNo).trim() : '';
     if (!finalBillNo) {
@@ -92,15 +120,15 @@ export const createParticular = async (req: Request, res: Response, next: NextFu
       finalBillNo = (maxNum + 1).toString().padStart(4, '0');
     }
 
-    const trimmedCustName = (customerName || 'General').trim();
+    const trimmedCustName = (customerName || 'General Cash Sale').trim();
 
-    // Auto-create / update Customer in database if needed
+    // Auto-create / update Customer in database
     try {
       const { Customer } = await import('../models/Customer');
       const existingCustomer = await Customer.findOne({
         name: { $regex: new RegExp(`^${escapeRegex(trimmedCustName)}$`, 'i') },
       });
-      if (!existingCustomer && trimmedCustName.toLowerCase() !== 'general') {
+      if (!existingCustomer && trimmedCustName.toLowerCase() !== 'general' && trimmedCustName.toLowerCase() !== 'general cash sale') {
         const allCusts = await Customer.find().sort({ createdAt: 1 });
         let maxId = 0;
         allCusts.forEach((c) => {
@@ -129,7 +157,26 @@ export const createParticular = async (req: Request, res: Response, next: NextFu
       console.warn('[Customer Sync Warn]:', custSyncErr);
     }
 
-    const billTotalNum = parseFloat(String(total || amount || '0').replace(/,/g, '')) || 0;
+    // Calculations
+    const backendSubtotal = cartValidation.netAmount;
+    const clientTotal = parseFloat(String(total || amount || '0').replace(/,/g, '')) || 0;
+    const finalSubtotal = backendSubtotal > 0 ? backendSubtotal : clientTotal;
+
+    const discNum = parseFloat(String(discount || '0').replace(/[^0-9.]/g, '')) || 0;
+    const transNum = parseFloat(String(transport || '0').replace(/[^0-9.]/g, '')) || 0;
+    const packNum = parseFloat(String(packing || '0').replace(/[^0-9.]/g, '')) || 0;
+    const taxNum = parseFloat(String(tax || '0').replace(/[^0-9.]/g, '')) || 0;
+
+    let computedDiscount = 0;
+    if (discNum > 0) {
+      computedDiscount = String(discount || '').includes('%') ? (finalSubtotal * discNum) / 100 : discNum;
+    }
+
+    const baseForTax = Math.max(0, finalSubtotal - computedDiscount + transNum + packNum);
+    const computedTax = taxNum > 0 ? (baseForTax * taxNum) / 100 : 0;
+    const computedGrandTotal = Math.max(0, finalSubtotal - computedDiscount + transNum + packNum + computedTax);
+
+    const billTotalNum = clientTotal > 0 ? clientTotal : computedGrandTotal;
     const paidNum = parseFloat(String(paidAmount || (paymentStatus === 'PAID' ? billTotalNum : '0')).replace(/,/g, '')) || 0;
 
     let computedStatus: 'PAID' | 'UNPAID' | 'PARTIAL' = 'UNPAID';
@@ -139,29 +186,75 @@ export const createParticular = async (req: Request, res: Response, next: NextFu
       computedStatus = 'PARTIAL';
     }
 
+    // Line items snapshot
+    const finalProductsList = cartValidation.lines.length > 0
+      ? cartValidation.lines.map((line) => ({
+          priceListId: line.priceListId,
+          sku: line.sku,
+          productName: line.productName,
+          particular: line.particular,
+          category: line.category,
+          pktUnit: line.pktUnit,
+          quantity: String(line.quantity),
+          rate: String(line.rate),
+          discountPercentage: String(line.discountPercentage),
+          discountAmount: String(line.discountAmount),
+          netRate: String(line.netRate),
+          amount: String(line.amount),
+          priceListType: line.priceListType,
+        }))
+      : (products || []).map((p: any) => ({
+          sku: p.sku || '',
+          productName: p.productName || p.particular || '',
+          particular: p.particular || p.productName || '',
+          category: p.category || 'General',
+          pktUnit: p.pktUnit || 'Box',
+          quantity: String(p.quantity || '1'),
+          rate: String(p.rate || '0'),
+          discountPercentage: String(p.discountPercentage || (targetType === '90_PERCENT' ? '90' : '30')),
+          discountAmount: String(p.discountAmount || '0'),
+          netRate: String(p.netRate || p.rate || '0'),
+          amount: String(p.amount || '0'),
+          priceListType: targetType,
+        }));
+
     const particular = await Particular.create({
       customerName: trimmedCustName,
       customerPhone: customerPhone || '',
       customerAddress: customerAddress || '',
       customerGst: customerGst || '',
-      caseCount: caseCount || '0',
+      caseCount: caseCount || String(cartValidation.totalCases || '0'),
       companyName: companyName || 'General',
+      priceListType: targetType,
+      pricingMode: targetType,
+      customDiscountPercent: customDiscountPercent || (targetType === 'CUSTOM' ? 40 : undefined),
       discount: discount || '0',
-      transport: transport || '-',
+      transport: transport || '0',
       packing: packing || '0',
       billNo: finalBillNo,
       tax: tax || '0',
-      amount: amount || total || '0.00',
-      total: total || amount || '0.00',
+      amount: finalSubtotal.toFixed(2),
+      total: billTotalNum.toFixed(2),
       paymentStatus: computedStatus,
       paymentMode: paymentMode || (computedStatus === 'PAID' ? 'CASH' : 'CREDIT'),
       paidAmount: paidNum > 0 ? paidNum.toFixed(2) : '0.00',
       notes: notes || '',
       date: date || new Date().toISOString().split('T')[0],
-      products: products || [],
+      products: finalProductsList,
     });
 
-    // 1. Automatically log Bill DEBIT to Account Ledger
+    // Deduct physical stock
+    for (const item of finalProductsList) {
+      const qtyNum = parseFloat(String(item.quantity)) || 0;
+      if (qtyNum > 0 && item.sku) {
+        await Product.findOneAndUpdate(
+          { sku: item.sku.trim().toUpperCase() },
+          { $inc: { stock: -qtyNum } }
+        );
+      }
+    }
+
+    // Ledger records
     if (billTotalNum > 0) {
       await AccountLedger.create({
         particularId: String(particular._id),
@@ -176,7 +269,6 @@ export const createParticular = async (req: Request, res: Response, next: NextFu
       });
     }
 
-    // 2. If bill is Paid or Partial Paid, log Payment CREDIT to Account Ledger
     if (paidNum > 0) {
       await AccountLedger.create({
         particularId: String(particular._id),
@@ -211,127 +303,14 @@ export const updateParticular = async (req: Request, res: Response, next: NextFu
     }
 
     const oldCustomerName = existing.customerName;
+    const updatedParticular = await Particular.findByIdAndUpdate(id, req.body, { new: true });
 
-    const {
-      customerName,
-      customerPhone,
-      customerAddress,
-      customerGst,
-      caseCount,
-      companyName,
-      discount,
-      transport,
-      packing,
-      billNo,
-      tax,
-      amount,
-      total,
-      paymentStatus,
-      paymentMode,
-      paidAmount,
-      notes,
-      date,
-      products,
-    } = req.body;
-
-    const updatedParticular = await Particular.findByIdAndUpdate(
-      id,
-      {
-        ...(customerName !== undefined && { customerName: String(customerName).trim() }),
-        ...(customerPhone !== undefined && { customerPhone }),
-        ...(customerAddress !== undefined && { customerAddress }),
-        ...(customerGst !== undefined && { customerGst }),
-        ...(caseCount !== undefined && { caseCount }),
-        ...(companyName !== undefined && { companyName }),
-        ...(discount !== undefined && { discount }),
-        ...(transport !== undefined && { transport }),
-        ...(packing !== undefined && { packing }),
-        ...(billNo !== undefined && { billNo: String(billNo).trim() }),
-        ...(tax !== undefined && { tax }),
-        ...(amount !== undefined && { amount }),
-        ...(total !== undefined && { total }),
-        ...(paymentStatus !== undefined && { paymentStatus }),
-        ...(paymentMode !== undefined && { paymentMode }),
-        ...(paidAmount !== undefined && { paidAmount }),
-        ...(notes !== undefined && { notes }),
-        ...(date !== undefined && { date }),
-        ...(products !== undefined && { products }),
-      },
-      { new: true, runValidators: true }
-    );
-
-    if (!updatedParticular) {
-      res.status(404).json({ success: false, error: 'Failed to update particular bill' });
-      return;
-    }
-
-    // Update or re-sync AccountLedger entries (BILL and PAYMENT)
-    const billTotalNum = parseFloat(String(updatedParticular.total || updatedParticular.amount || '0').replace(/,/g, '')) || 0;
-    const paidNum = parseFloat(String(updatedParticular.paidAmount || (updatedParticular.paymentStatus === 'PAID' ? billTotalNum : '0')).replace(/,/g, '')) || 0;
-
-    // 1. BILL Ledger entry
-    const billLedgerEntry = await AccountLedger.findOne({
-      particularId: String(id),
-      type: 'BILL',
-    });
-
-    if (billLedgerEntry) {
-      billLedgerEntry.customerName = updatedParticular.customerName;
-      billLedgerEntry.companyName = updatedParticular.companyName;
-      billLedgerEntry.date = updatedParticular.date;
-      billLedgerEntry.billNo = updatedParticular.billNo;
-      billLedgerEntry.debit = billTotalNum.toFixed(2);
-      await billLedgerEntry.save();
-    } else if (billTotalNum > 0) {
-      await AccountLedger.create({
-        particularId: String(updatedParticular._id),
-        billNo: updatedParticular.billNo,
-        customerName: updatedParticular.customerName,
-        date: updatedParticular.date,
-        companyName: updatedParticular.companyName,
-        debit: billTotalNum.toFixed(2),
-        credit: '0.00',
-        balance: '0.00',
-        type: 'BILL',
-      });
-    }
-
-    // 2. PAYMENT Ledger entry
-    const paymentLedgerEntry = await AccountLedger.findOne({
-      particularId: String(id),
-      type: 'PAYMENT',
-    });
-
-    if (paymentLedgerEntry) {
-      if (paidNum > 0) {
-        paymentLedgerEntry.customerName = updatedParticular.customerName;
-        paymentLedgerEntry.companyName = updatedParticular.companyName;
-        paymentLedgerEntry.date = updatedParticular.date;
-        paymentLedgerEntry.billNo = updatedParticular.billNo;
-        paymentLedgerEntry.credit = paidNum.toFixed(2);
-        await paymentLedgerEntry.save();
-      } else {
-        await AccountLedger.findByIdAndDelete(paymentLedgerEntry._id);
-      }
-    } else if (paidNum > 0) {
-      await AccountLedger.create({
-        particularId: String(updatedParticular._id),
-        billNo: updatedParticular.billNo,
-        customerName: updatedParticular.customerName,
-        date: updatedParticular.date,
-        companyName: updatedParticular.companyName,
-        debit: '0.00',
-        credit: paidNum.toFixed(2),
-        balance: '0.00',
-        type: 'PAYMENT',
-      });
-    }
-
-    // Recalculate balances
-    if (oldCustomerName && oldCustomerName !== updatedParticular.customerName) {
+    if (updatedParticular) {
       await recalculateCustomerBalance(oldCustomerName);
+      if (oldCustomerName !== updatedParticular.customerName) {
+        await recalculateCustomerBalance(updatedParticular.customerName);
+      }
     }
-    await recalculateCustomerBalance(updatedParticular.customerName);
 
     res.status(200).json({ success: true, data: updatedParticular });
   } catch (error) {
@@ -341,34 +320,33 @@ export const updateParticular = async (req: Request, res: Response, next: NextFu
 
 export const deleteParticular = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const particular = await Particular.findById(req.params.id);
+    const { id } = req.params;
+    const particular = await Particular.findById(id);
+
     if (!particular) {
       res.status(404).json({ success: false, error: 'Particular bill not found' });
       return;
     }
 
-    const customerName = particular.customerName;
-
-    // 1. Delete associated Cloudinary asset if present
-    if (particular.pdfPublicId && isCloudinaryConfigured()) {
-      await deleteFromCloudinary(particular.pdfPublicId);
+    // Restore stock
+    for (const item of particular.products || []) {
+      const qtyNum = parseFloat(String(item.quantity)) || 0;
+      if (qtyNum > 0 && item.sku) {
+        await Product.findOneAndUpdate(
+          { sku: item.sku.trim().toUpperCase() },
+          { $inc: { stock: qtyNum } }
+        );
+      }
     }
 
-    // 2. Delete Particular Document
-    await Particular.findByIdAndDelete(req.params.id);
+    const customerName = particular.customerName;
 
-    // 3. Cascade Delete: Delete matching AccountLedger entries (BILL and PAYMENT)
-    await AccountLedger.deleteMany({
-      $or: [
-        { particularId: String(req.params.id) },
-        { particularId: String(particular._id) },
-      ],
-    });
+    await AccountLedger.deleteMany({ particularId: String(id) });
+    await Particular.findByIdAndDelete(id);
 
-    // 4. Recalculate balance for this customer
     await recalculateCustomerBalance(customerName);
 
-    res.status(200).json({ success: true, data: {} });
+    res.status(200).json({ success: true, message: 'Particular bill deleted and stock restored successfully' });
   } catch (error) {
     next(error);
   }
@@ -379,59 +357,33 @@ export const uploadParticularPdf = async (req: Request, res: Response, next: Nex
     const { id } = req.params;
     const { pdfData, pdfName } = req.body;
 
-    if (!pdfData) {
-      res.status(400).json({ success: false, error: 'Document data is required' });
-      return;
-    }
-
-    const existingParticular = await Particular.findById(id);
-    if (!existingParticular) {
+    const particular = await Particular.findById(id);
+    if (!particular) {
       res.status(404).json({ success: false, error: 'Particular bill not found' });
       return;
     }
 
-    let savedUrl = pdfData;
+    let finalUrl = pdfData;
     let publicId = '';
 
-    if (isCloudinaryConfigured()) {
+    if (isCloudinaryConfigured() && pdfData && (pdfData.startsWith('data:image') || pdfData.startsWith('data:application/pdf'))) {
       try {
-        if (existingParticular.pdfPublicId) {
-          await deleteFromCloudinary(existingParticular.pdfPublicId);
-        }
-
-        const cloudRes = await uploadToCloudinary(
-          pdfData,
-          'dheeksha_trade/bills',
-          pdfName || `Bill-${existingParticular.billNo || 'receipt'}`
-        );
-
-        savedUrl = cloudRes.secure_url;
-        publicId = cloudRes.public_id;
-        console.log(`[Cloudinary Success] Uploaded: ${savedUrl}`);
+        const uploadResult = await uploadToCloudinary(pdfData, 'dheeksha_trade/bills', pdfName);
+        finalUrl = uploadResult.secure_url;
+        publicId = uploadResult.public_id;
       } catch (cloudErr) {
-        console.warn('[Cloudinary Warning] Falling back to direct database storage:', cloudErr);
-        savedUrl = pdfData;
+        console.warn('[Cloudinary Warning] Upload failed, falling back to base64 storage:', cloudErr);
       }
-    } else {
-      console.log('[Storage] Storing document directly in database (Cloudinary not configured)');
     }
 
-    existingParticular.pdfData = savedUrl;
-    existingParticular.pdfName = pdfName || 'transport-receipt';
-    existingParticular.pdfPublicId = publicId;
-    await existingParticular.save();
+    particular.pdfData = finalUrl;
+    particular.pdfName = pdfName || 'Receipt';
+    if (publicId) particular.pdfPublicId = publicId;
+    await particular.save();
 
-    res.status(200).json({
-      success: true,
-      message: 'Transport receipt uploaded successfully',
-      data: existingParticular,
-    });
-  } catch (error: any) {
-    console.error('[Upload Error]:', error);
-    res.status(500).json({
-      success: false,
-      error: error?.message || 'Failed to upload document',
-    });
+    res.status(200).json({ success: true, data: particular });
+  } catch (error) {
+    next(error);
   }
 };
 
@@ -439,16 +391,13 @@ export const deleteParticularPdf = async (req: Request, res: Response, next: Nex
   try {
     const { id } = req.params;
     const particular = await Particular.findById(id);
-
     if (!particular) {
       res.status(404).json({ success: false, error: 'Particular bill not found' });
       return;
     }
 
-    // Delete from Cloudinary if public_id exists
-    if (particular.pdfPublicId && isCloudinaryConfigured()) {
+    if (particular.pdfPublicId) {
       await deleteFromCloudinary(particular.pdfPublicId);
-      console.log(`[Cloudinary Delete] Removed asset: ${particular.pdfPublicId}`);
     }
 
     particular.pdfData = '';
@@ -456,7 +405,69 @@ export const deleteParticularPdf = async (req: Request, res: Response, next: Nex
     particular.pdfPublicId = '';
     await particular.save();
 
-    res.status(200).json({ success: true, message: 'PDF deleted successfully', data: particular });
+    res.status(200).json({ success: true, data: particular });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getSalesSummary = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const allBills = await Particular.find().sort({ createdAt: -1 });
+
+    let totalSales = 0;
+    let ninetyBillsCount = 0;
+    let ninetySalesTotal = 0;
+    let customBillsCount = 0;
+    let customSalesTotal = 0;
+    let totalDiscountGiven = 0;
+
+    const customDiscountBreakdown: Record<string, { count: number; total: number }> = {};
+
+    for (const bill of allBills) {
+      const billTotal = parseFloat(String(bill.total || bill.amount || '0').replace(/,/g, '')) || 0;
+      totalSales += billTotal;
+
+      const isCustom = (bill.priceListType || bill.pricingMode) === 'CUSTOM';
+
+      if (isCustom) {
+        customBillsCount += 1;
+        customSalesTotal += billTotal;
+        const discKey = `${bill.customDiscountPercent || 30}%`;
+        if (!customDiscountBreakdown[discKey]) {
+          customDiscountBreakdown[discKey] = { count: 0, total: 0 };
+        }
+        customDiscountBreakdown[discKey].count += 1;
+        customDiscountBreakdown[discKey].total += billTotal;
+      } else {
+        ninetyBillsCount += 1;
+        ninetySalesTotal += billTotal;
+      }
+
+      for (const prod of bill.products || []) {
+        const qty = parseFloat(String(prod.quantity)) || 0;
+        const discAmt = parseFloat(String(prod.discountAmount)) || 0;
+        totalDiscountGiven += discAmt * qty;
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalBills: allBills.length,
+        totalSales: Math.round(totalSales * 100) / 100,
+        totalDiscountGiven: Math.round(totalDiscountGiven * 100) / 100,
+        ninetyMode: {
+          billsCount: ninetyBillsCount,
+          totalSales: Math.round(ninetySalesTotal * 100) / 100,
+        },
+        customMode: {
+          billsCount: customBillsCount,
+          totalSales: Math.round(customSalesTotal * 100) / 100,
+          breakdown: customDiscountBreakdown,
+        },
+      },
+    });
   } catch (error) {
     next(error);
   }

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
-import PriceList from '../models/PriceList';
+import PriceList, { PriceListType } from '../models/PriceList';
 import Category from '../models/Category';
-import { Product } from '../models/Product';
+import Product from '../models/Product';
 
 const PRESET_COLORS = [
   '#DC2626', '#EA580C', '#D97706', '#059669', '#2563EB', '#7C3AED', '#DB2777', '#4B5563'
@@ -22,22 +22,17 @@ const cleanToEnglish = (text: string): string => {
     .trim();
 };
 
-// Helper to auto-sync categories and products into DB
-const syncCategoriesAndProducts = async (items: any[]) => {
+/**
+ * Sync master categories and master physical product items
+ */
+const syncMasterCatalog = async (items: any[]) => {
   try {
     // 1. Sync Categories
     const rawCategories = Array.from(new Set(items.map((i) => cleanToEnglish(i.category) || 'General').filter(Boolean)));
     const existingCategories = await Category.find();
     const existingCatNames = new Set(existingCategories.map((c) => c.name.toLowerCase().trim()));
 
-    const newCategoriesToInsert: Array<{
-      name: string;
-      code: string;
-      description: string;
-      color: string;
-      displayOrder: number;
-      isActive: boolean;
-    }> = [];
+    const newCategoriesToInsert: any[] = [];
     for (const catName of rawCategories) {
       if (!existingCatNames.has(catName.toLowerCase().trim())) {
         const code = catName
@@ -50,7 +45,7 @@ const syncCategoriesAndProducts = async (items: any[]) => {
         newCategoriesToInsert.push({
           name: catName,
           code: code || 'CAT',
-          description: `Auto-created from Price List`,
+          description: 'Auto-created from Price List Import',
           color: colorHex,
           displayOrder: existingCategories.length + newCategoriesToInsert.length + 1,
           isActive: true,
@@ -63,55 +58,48 @@ const syncCategoriesAndProducts = async (items: any[]) => {
       await Category.insertMany(newCategoriesToInsert);
     }
 
-    // 2. Sync Products
+    // 2. Sync master Product inventory (physical stock tracking)
     const existingProducts = await Product.find();
-    const existingProdMap = new Map(existingProducts.map((p) => [p.name.toLowerCase().trim(), p]));
+    const skuMap = new Map(existingProducts.map((p) => [p.sku.toUpperCase().trim(), p]));
     let maxSlNo = existingProducts.length > 0 ? Math.max(...existingProducts.map((p) => p.slNo || 0)) : 0;
 
     for (const item of items) {
-      const cleanName = cleanToEnglish(String(item.itemName || item.name || ''));
-      const nameKey = cleanName.toLowerCase().trim();
-      if (!nameKey) continue;
+      const cleanSku = String(item.sku || '').trim().toUpperCase();
+      const cleanName = cleanToEnglish(String(item.productName || item.itemName || ''));
+      if (!cleanSku || !cleanName) continue;
 
-      const rateVal = Number(item.rate || item.price || 0);
-      const mrpVal = Number(item.mrp || 0);
-      const unitVal = cleanToEnglish(String(item.unit || 'Box')) || 'Box';
-      const catVal = cleanToEnglish(String(item.category || 'General')) || 'General';
-
-      if (existingProdMap.has(nameKey)) {
-        // Update product rate/category
-        const existing = existingProdMap.get(nameKey);
-        if (existing) {
-          await Product.findByIdAndUpdate(existing._id, {
-            category: catVal,
-            rate: rateVal,
-            mrp: mrpVal,
-            unit: unitVal,
-          });
-        }
-      } else {
-        // Insert new product
+      if (!skuMap.has(cleanSku)) {
         maxSlNo += 1;
-        const created = await Product.create({
+        const newMaster = await Product.create({
           slNo: maxSlNo,
+          sku: cleanSku,
           name: cleanName,
-          category: catVal,
-          rate: rateVal,
-          mrp: mrpVal,
-          unit: unitVal,
+          category: cleanToEnglish(String(item.category || 'General')) || 'General',
+          brand: item.brand || 'Standard',
+          unit: cleanToEnglish(String(item.unit || 'Box')) || 'Box',
+          hsn: item.hsn || '3604',
+          stock: Number(item.stock || 100),
+          isActive: true,
         });
-        existingProdMap.set(nameKey, created);
+        skuMap.set(cleanSku, newMaster);
       }
     }
-  } catch (syncErr) {
-    console.error('[Sync Error] Failed to sync categories and products:', syncErr);
+  } catch (err) {
+    console.error('[Catalog Sync Warning]:', err);
   }
 };
 
-export const getPriceList = async (req: Request, res: Response): Promise<void> => {
+/**
+ * GET /api/price-lists?type=90_PERCENT or ?type=CUSTOM
+ */
+export const getPriceLists = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { category, search } = req.query;
-    const filter: any = {};
+    const { type, category, search } = req.query;
+
+    const targetType: PriceListType =
+      String(type || '').toUpperCase() === 'CUSTOM' ? 'CUSTOM' : '90_PERCENT';
+
+    const filter: any = { priceListType: targetType };
 
     if (category && category !== 'ALL') {
       filter.category = category;
@@ -119,63 +107,99 @@ export const getPriceList = async (req: Request, res: Response): Promise<void> =
 
     if (search) {
       filter.$or = [
+        { productName: { $regex: String(search), $options: 'i' } },
         { itemName: { $regex: String(search), $options: 'i' } },
+        { sku: { $regex: String(search), $options: 'i' } },
         { category: { $regex: String(search), $options: 'i' } },
         { batchName: { $regex: String(search), $options: 'i' } },
       ];
     }
 
-    const items = await PriceList.find(filter).sort({ slNo: 1, createdAt: -1 });
+    const items = await PriceList.find(filter).sort({ slNo: 1, createdAt: 1 });
 
     res.status(200).json({
       success: true,
+      priceListType: targetType,
       count: items.length,
       data: items,
     });
   } catch (error: any) {
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Server Error while fetching price list',
-    });
+    res.status(500).json({ success: false, error: error.message || 'Error fetching price list' });
   }
 };
 
-export const createPriceListItem = async (req: Request, res: Response): Promise<void> => {
+/**
+ * GET /api/billing/products?priceListType=90_PERCENT&search=...
+ * Billing search endpoint strictly scoped to the active priceListType.
+ */
+export const getBillingProducts = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { itemName, category, unit, mrp, discountPercent, rate, stock, effectiveDate, batchName, slNo } = req.body;
+    const { priceListType, search, category } = req.query;
 
-    if (!itemName || !itemName.trim()) {
-      res.status(400).json({ success: false, error: 'Item name is required' });
+    const targetType: PriceListType =
+      String(priceListType || '').toUpperCase() === 'CUSTOM' ? 'CUSTOM' : '90_PERCENT';
+
+    const filter: any = {
+      priceListType: targetType,
+      active: { $ne: false },
+    };
+
+    if (category && category !== 'ALL') {
+      filter.category = category;
+    }
+
+    if (search && String(search).trim() !== '') {
+      const term = String(search).trim();
+      filter.$or = [
+        { productName: { $regex: term, $options: 'i' } },
+        { itemName: { $regex: term, $options: 'i' } },
+        { sku: { $regex: term, $options: 'i' } },
+        { category: { $regex: term, $options: 'i' } },
+      ];
+    }
+
+    const items = await PriceList.find(filter).sort({ slNo: 1, productName: 1 });
+
+    // Attach physical master stock
+    const allMasterProducts = await Product.find({}, 'sku stock');
+    const stockMap = new Map(allMasterProducts.map((p) => [p.sku.toUpperCase(), p.stock]));
+
+    const enrichedItems = items.map((item) => {
+      const masterStock = stockMap.get(item.sku.toUpperCase());
+      return {
+        ...item.toObject(),
+        stock: masterStock !== undefined ? masterStock : item.stock || 100,
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      priceListType: targetType,
+      count: enrichedItems.length,
+      data: enrichedItems,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Error searching billing products' });
+  }
+};
+
+/**
+ * POST /api/price-lists/import
+ * Bulk upload strictly attaches UI-selected priceListType and validates duplicate scoped to that list.
+ */
+export const importPriceList = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { priceListType, items, batchName, replaceExisting } = req.body;
+
+    if (!priceListType || (priceListType !== '90_PERCENT' && priceListType !== 'CUSTOM')) {
+      res.status(400).json({
+        success: false,
+        error: 'Invalid or missing priceListType in request. Must be "90_PERCENT" or "CUSTOM".',
+      });
       return;
     }
 
-    const nextSlNo = slNo || (await PriceList.countDocuments()) + 1;
-
-    const item = await PriceList.create({
-      slNo: nextSlNo,
-      itemName: itemName.trim(),
-      category: category || 'General',
-      unit: unit || 'Box',
-      mrp: Number(mrp) || 0,
-      discountPercent: Number(discountPercent) || 0,
-      rate: Number(rate) || 0,
-      stock: Number(stock) || 0,
-      effectiveDate: effectiveDate || new Date().toISOString().split('T')[0],
-      batchName: batchName || 'Manual Entry',
-    });
-
-    // Auto-sync category and product
-    await syncCategoriesAndProducts([item]);
-
-    res.status(201).json({ success: true, data: item });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
-
-export const bulkImportPriceList = async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { items, batchName, replaceExisting } = req.body;
+    const targetType: PriceListType = priceListType;
 
     if (!Array.isArray(items) || items.length === 0) {
       res.status(400).json({ success: false, error: 'No items provided for import' });
@@ -183,68 +207,202 @@ export const bulkImportPriceList = async (req: Request, res: Response): Promise<
     }
 
     if (replaceExisting) {
-      await PriceList.deleteMany({});
-      await Product.deleteMany({}); // Also remove products when replacing entire price list
+      await PriceList.deleteMany({ priceListType: targetType });
     }
 
-    const currentCount = replaceExisting ? 0 : await PriceList.countDocuments();
-    const batchTitle = batchName || `Upload-${new Date().toLocaleDateString('en-GB')}`;
+    const currentCount = replaceExisting ? 0 : await PriceList.countDocuments({ priceListType: targetType });
+    const batchTitle = batchName || `Upload-${targetType}-${new Date().toLocaleDateString('en-GB')}`;
 
-    const formattedItems = items.map((item: any, idx: number) => ({
-      slNo: item.slNo || currentCount + idx + 1,
-      itemName: cleanToEnglish(String(item.itemName || item.name || item['Product Name'] || item['Item Name'] || '')),
-      category: cleanToEnglish(String(item.category || item.Category || 'General')) || 'General',
-      unit: cleanToEnglish(String(item.unit || item.Unit || 'Box')) || 'Box',
-      mrp: Number(item.mrp || item.MRP || item['M.R.P'] || 0),
-      discountPercent: Number(item.discountPercent || item.discount || item['Discount %'] || 0),
-      rate: Number(item.rate || item.price || item.Rate || item['Net Rate'] || item['Selling Price'] || 0),
-      stock: Number(item.stock || item.Stock || item['Qty'] || 0),
-      effectiveDate: item.effectiveDate || new Date().toISOString().split('T')[0],
-      batchName: batchTitle,
-    })).filter((i: any) => Boolean(i.itemName));
+    const formattedItems: any[] = [];
+    const seenSkus = new Set<string>();
+
+    for (let idx = 0; idx < items.length; idx++) {
+      const raw = items[idx];
+      const name = cleanToEnglish(String(raw.productName || raw.itemName || raw.name || raw['Product Name'] || raw['Item Name'] || ''));
+      if (!name) continue;
+
+      const slNo = Number(raw.slNo || raw['S.No'] || currentCount + idx + 1);
+      const sku = String(raw.sku || raw.SKU || raw['Product Code'] || `CK-${String(slNo).padStart(3, '0')}`).trim().toUpperCase();
+
+      if (seenSkus.has(sku)) continue; // Skip in-file duplicates
+      seenSkus.add(sku);
+
+      const rate = Number(raw.rate || raw['Rate'] || raw['Product Rate'] || raw.mrp || raw.MRP || 0);
+      const discountPercentage = targetType === '90_PERCENT'
+        ? 90
+        : Number(raw.discountPercentage || raw['Discount %'] || raw.discountPercent || raw.discount || 30);
+
+      const discountAmount = Math.round(((rate * discountPercentage) / 100) * 100) / 100;
+      const netRate = Number(raw.netRate || raw['Net Rate'] || raw['Selling Price'] || (rate - discountAmount));
+      const quantity = Number(raw.quantity || raw['Quantity / Count'] || raw['Qty'] || raw['Count'] || 10);
+      const unit = cleanToEnglish(String(raw.unit || raw['Per / PCS'] || raw['Unit'] || 'Box')) || 'Box';
+      const category = cleanToEnglish(String(raw.category || raw['Category'] || 'General')) || 'General';
+      const stock = Number(raw.stock || raw['Stock'] || 100);
+
+      formattedItems.push({
+        slNo,
+        sku,
+        productName: name,
+        itemName: name,
+        category,
+        priceListType: targetType,
+        rate,
+        discountPercentage,
+        discountAmount,
+        netRate: netRate > 0 ? netRate : Math.max(0, rate - discountAmount),
+        quantity,
+        unit,
+        stock,
+        active: true,
+        batchName: batchTitle,
+      });
+    }
 
     if (formattedItems.length === 0) {
-      res.status(400).json({ success: false, error: 'No valid items with names found in the uploaded file' });
+      res.status(400).json({ success: false, error: 'No valid products found in uploaded data' });
       return;
     }
 
-    const inserted = await PriceList.insertMany(formattedItems);
+    // Upsert items strictly for targetType
+    const operations = formattedItems.map((doc) => ({
+      updateOne: {
+        filter: { sku: doc.sku, priceListType: targetType },
+        update: { $set: doc },
+        upsert: true,
+      },
+    }));
 
-    // Auto-sync into Categories and Products collections
-    await syncCategoriesAndProducts(formattedItems);
+    await PriceList.bulkWrite(operations);
+
+    // Sync master categories and product catalog
+    await syncMasterCatalog(formattedItems);
+
+    const updatedCount = await PriceList.countDocuments({ priceListType: targetType });
 
     res.status(201).json({
       success: true,
-      message: `Successfully imported ${inserted.length} price list items, and synced Categories & Products!`,
-      count: inserted.length,
-      data: inserted,
+      message: `Successfully imported ${formattedItems.length} items into ${targetType === '90_PERCENT' ? '90% Discount Price List' : 'Custom Discount Price List'}!`,
+      priceListType: targetType,
+      count: formattedItems.length,
+      totalInList: updatedCount,
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
 };
 
-export const updatePriceListItem = async (req: Request, res: Response): Promise<void> => {
+/**
+ * POST /api/price-lists
+ * Create a single item in the specified priceListType
+ */
+export const createPriceListItem = async (req: Request, res: Response): Promise<void> => {
   try {
-    const item = await PriceList.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
+    const {
+      sku,
+      productName,
+      itemName,
+      category,
+      priceListType = '90_PERCENT',
+      rate,
+      discountPercentage,
+      quantity,
+      unit,
+      stock,
+      active,
+      batchName,
+      slNo,
+    } = req.body;
+
+    const name = (productName || itemName || '').trim();
+    if (!name) {
+      res.status(400).json({ success: false, error: 'Product name is required' });
+      return;
+    }
+
+    const targetType: PriceListType =
+      String(priceListType).toUpperCase() === 'CUSTOM' ? 'CUSTOM' : '90_PERCENT';
+
+    const nextSlNo = slNo || (await PriceList.countDocuments({ priceListType: targetType })) + 1;
+    const cleanSku = (sku || `CK-${String(nextSlNo).padStart(3, '0')}`).trim().toUpperCase();
+
+    const existingInSameList = await PriceList.findOne({ sku: cleanSku, priceListType: targetType });
+    if (existingInSameList) {
+      res.status(400).json({
+        success: false,
+        error: `Product with SKU "${cleanSku}" already exists in the ${targetType === '90_PERCENT' ? '90% Price List' : 'Custom Price List'}.`,
+      });
+      return;
+    }
+
+    const rateNum = Number(rate) || 0;
+    const discPct = targetType === '90_PERCENT' ? 90 : Number(discountPercentage) || 0;
+    const discAmt = Math.round(((rateNum * discPct) / 100) * 100) / 100;
+    const netRate = Math.max(0, rateNum - discAmt);
+
+    const item = await PriceList.create({
+      slNo: nextSlNo,
+      sku: cleanSku,
+      productName: name,
+      itemName: name,
+      category: category || 'General',
+      priceListType: targetType,
+      rate: rateNum,
+      discountPercentage: discPct,
+      discountAmount: discAmt,
+      netRate,
+      quantity: Number(quantity) || 10,
+      unit: unit || 'Box',
+      stock: Number(stock) || 100,
+      active: active !== undefined ? Boolean(active) : true,
+      batchName: batchName || (targetType === '90_PERCENT' ? '90% Price List' : 'Custom Price List'),
     });
 
-    if (!item) {
+    await syncMasterCatalog([item]);
+
+    res.status(201).json({ success: true, data: item });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * PUT /api/price-lists/:id
+ */
+export const updatePriceListItem = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const existing = await PriceList.findById(id);
+
+    if (!existing) {
       res.status(404).json({ success: false, error: 'Price item not found' });
       return;
     }
 
-    // Auto sync update to product
-    await syncCategoriesAndProducts([item]);
+    const updates = { ...req.body };
+    if (updates.productName && !updates.itemName) updates.itemName = updates.productName;
+    if (updates.itemName && !updates.productName) updates.productName = updates.itemName;
 
-    res.status(200).json({ success: true, data: item });
+    const rateNum = updates.rate !== undefined ? Number(updates.rate) : existing.rate;
+    const discPct = updates.discountPercentage !== undefined
+      ? Number(updates.discountPercentage)
+      : existing.discountPercentage;
+
+    updates.discountAmount = Math.round(((rateNum * discPct) / 100) * 100) / 100;
+    if (updates.netRate === undefined) {
+      updates.netRate = Math.max(0, rateNum - updates.discountAmount);
+    }
+
+    const updated = await PriceList.findByIdAndUpdate(id, updates, { new: true, runValidators: true });
+
+    res.status(200).json({ success: true, data: updated });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
 };
 
+/**
+ * DELETE /api/price-lists/:id
+ */
 export const deletePriceListItem = async (req: Request, res: Response): Promise<void> => {
   try {
     const item = await PriceList.findByIdAndDelete(req.params.id);
@@ -253,51 +411,30 @@ export const deletePriceListItem = async (req: Request, res: Response): Promise<
       return;
     }
 
-    // Auto-delete matching product from Products collection!
-    const escapedName = item.itemName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    await Product.deleteMany({
-      name: { $regex: new RegExp(`^${escapedName}$`, 'i') },
+    res.status(200).json({
+      success: true,
+      message: `Product "${item.productName || item.itemName}" deleted from ${item.priceListType === '90_PERCENT' ? '90%' : 'Custom'} Price List.`,
     });
-
-    res.status(200).json({ success: true, message: `Price item "${item.itemName}" and matching product deleted successfully` });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }
 };
 
-export const deletePriceListBatch = async (req: Request, res: Response): Promise<void> => {
+/**
+ * DELETE /api/price-lists/clear/all?type=90_PERCENT
+ */
+export const clearAllPriceList = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { batchName } = req.params;
-    if (!batchName) {
-      res.status(400).json({ success: false, error: 'Batch name is required' });
-      return;
-    }
+    const { type } = req.query;
+    const targetType: PriceListType =
+      String(type || '').toUpperCase() === 'CUSTOM' ? 'CUSTOM' : '90_PERCENT';
 
-    const itemsToDelete = await PriceList.find({ batchName });
-    const itemNames = itemsToDelete.map((i) => i.itemName.trim());
-
-    await PriceList.deleteMany({ batchName });
-
-    if (itemNames.length > 0) {
-      await Product.deleteMany({
-        name: { $in: itemNames },
-      });
-    }
+    const result = await PriceList.deleteMany({ priceListType: targetType });
 
     res.status(200).json({
       success: true,
-      message: `Deleted ${itemsToDelete.length} items from batch "${batchName}" and removed them from Products catalog.`,
+      message: `Cleared ${result.deletedCount} items from ${targetType === '90_PERCENT' ? '90% Price List' : 'Custom Price List'}.`,
     });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
-
-export const clearAllPriceList = async (_req: Request, res: Response): Promise<void> => {
-  try {
-    await PriceList.deleteMany({});
-    await Product.deleteMany({}); // Also clear all products
-    res.status(200).json({ success: true, message: 'All price list items and products cleared successfully' });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

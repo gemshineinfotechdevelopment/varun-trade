@@ -1,10 +1,8 @@
 /**
- * Centralized API Service for Dheeksha Trade
- * Automatically resolves and normalizes backend base URL from Vite environment variables.
+ * Centralized API Service for Crackers Shop Billing Application with Separate Price Lists
  */
 
 const getApiBaseUrl = (): string => {
-  // Check for standard VITE_API_URL or legacy VITE_API_BASE_URL
   const rawUrl = (
     import.meta.env.VITE_API_URL ||
     import.meta.env.VITE_API_BASE_URL ||
@@ -12,23 +10,20 @@ const getApiBaseUrl = (): string => {
   ).trim();
 
   if (rawUrl) {
-    // Strip trailing slashes
     const sanitized = rawUrl.replace(/\/+$/, '');
-    // Ensure /api path is present
     return sanitized.endsWith('/api') ? sanitized : `${sanitized}/api`;
   }
 
-  // Safe development fallback: ONLY used during local `vite dev`
   if (import.meta.env.DEV) {
     return 'http://localhost:5004/api';
   }
 
-  // In production builds when no environment variable is provided,
-  // use relative '/api' endpoint rather than failing or targeting localhost
   return '/api';
 };
 
 export const API_BASE_URL = getApiBaseUrl();
+
+export type PriceListType = '90_PERCENT' | 'CUSTOM';
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -38,12 +33,57 @@ export interface ApiResponse<T> {
   message?: string;
 }
 
+export interface PriceListItem {
+  _id?: string;
+  id?: string;
+  slNo?: number;
+  sku: string;
+  productName: string;
+  itemName?: string;
+  category: string;
+  priceListType: PriceListType;
+  rate: number; // Rate / MRP
+  discountPercentage: number;
+  discountAmount: number;
+  netRate: number; // Selling Net Rate
+  quantity: number; // Count / Quantity
+  unit: string; // Per / PCS
+  stock?: number;
+  active: boolean;
+  batchName?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CustomDiscountItem {
+  _id?: string;
+  id?: string;
+  percentage: number;
+  label?: string;
+  isActive: boolean;
+  displayOrder: number;
+}
+
+export interface SalesSummaryData {
+  totalBills: number;
+  totalSales: number;
+  totalDiscountGiven: number;
+  ninetyMode: {
+    billsCount: number;
+    totalSales: number;
+  };
+  customMode: {
+    billsCount: number;
+    totalSales: number;
+    breakdown: Record<string, { count: number; total: number }>;
+  };
+}
+
 // Generic Request Helper
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   const url = `${API_BASE_URL}${normalizedEndpoint}`;
 
-  // Retrieve auth token if stored
   const token = typeof window !== 'undefined' ? localStorage.getItem('dheeksha_auth_token') : null;
 
   const headers: Record<string, string> = {
@@ -97,7 +137,7 @@ export const CompaniesApi = {
   delete: (id: string) => request<any>(`/companies/${id}`, { method: 'DELETE' }),
 };
 
-// Products API
+// Products Catalog API (Master inventory items)
 export const ProductsApi = {
   getAll: () => request<any[]>('/products'),
   getById: (id: string) => request<any>(`/products/${id}`),
@@ -116,28 +156,55 @@ export const CategoriesApi = {
   clearAll: () => request<any>('/categories/clear/all', { method: 'DELETE' }),
 };
 
-// Price Lists API
-export const PriceListsApi = {
-  getAll: (params?: { category?: string; search?: string }) => {
-    const query = new URLSearchParams();
-    if (params?.category && params.category !== 'ALL') query.append('category', params.category);
-    if (params?.search) query.append('search', params.search);
-    const queryString = query.toString();
-    return request<any[]>(`/pricelists${queryString ? `?${queryString}` : ''}`);
-  },
-  create: (data: any) => request<any>('/pricelists', { method: 'POST', body: JSON.stringify(data) }),
-  bulkImport: (data: { items: any[]; batchName?: string; replaceExisting?: boolean }) =>
-    request<any>('/pricelists/bulk', { method: 'POST', body: JSON.stringify(data) }),
-  update: (id: string, data: any) => request<any>(`/pricelists/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  delete: (id: string) => request<any>(`/pricelists/${id}`, { method: 'DELETE' }),
-  deleteBatch: (batchName: string) => request<any>(`/pricelists/batch/${encodeURIComponent(batchName)}`, { method: 'DELETE' }),
-  clearAll: () => request<any>('/pricelists/clear/all', { method: 'DELETE' }),
+// Custom Discounts Configuration API
+export const CustomDiscountsApi = {
+  getAll: () => request<CustomDiscountItem[]>('/custom-discounts'),
+  create: (data: Partial<CustomDiscountItem>) =>
+    request<CustomDiscountItem>('/custom-discounts', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: Partial<CustomDiscountItem>) =>
+    request<CustomDiscountItem>(`/custom-discounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) => request<any>(`/custom-discounts/${id}`, { method: 'DELETE' }),
 };
 
-// Particulars API
+// Price Lists API (Strictly separated 90% and Custom price list documents)
+export const PriceListsApi = {
+  getByType: (type: PriceListType, params?: { category?: string; search?: string }) => {
+    const query = new URLSearchParams();
+    query.append('type', type);
+    if (params?.category && params.category !== 'ALL') query.append('category', params.category);
+    if (params?.search) query.append('search', params.search);
+    return request<PriceListItem[]>(`/price-lists?${query.toString()}`);
+  },
+  getBillingProducts: (priceListType: PriceListType, search?: string, category?: string) => {
+    const query = new URLSearchParams();
+    query.append('priceListType', priceListType);
+    if (search) query.append('search', search);
+    if (category && category !== 'ALL') query.append('category', category);
+    return request<PriceListItem[]>(`/price-lists/billing/products?${query.toString()}`);
+  },
+  import: (data: { priceListType: PriceListType; items: any[]; batchName?: string; replaceExisting?: boolean }) =>
+    request<any>('/price-lists/import', { method: 'POST', body: JSON.stringify(data) }),
+  create: (data: Partial<PriceListItem>) =>
+    request<PriceListItem>('/price-lists', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: Partial<PriceListItem>) =>
+    request<PriceListItem>(`/price-lists/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) => request<any>(`/price-lists/${id}`, { method: 'DELETE' }),
+  clearAll: (type: PriceListType) => request<any>(`/price-lists/clear/all?type=${type}`, { method: 'DELETE' }),
+};
+
+// Billing / Particulars API
 export const ParticularsApi = {
-  getAll: (customerName?: string) =>
-    request<any[]>(`/particulars${customerName && customerName !== 'ALL' ? `?customerName=${encodeURIComponent(customerName)}` : ''}`),
+  getAll: (params?: { customerName?: string; priceListType?: string; pricingMode?: string; startDate?: string; endDate?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.customerName && params.customerName !== 'ALL') query.append('customerName', params.customerName);
+    const mode = params?.priceListType || params?.pricingMode;
+    if (mode && mode !== 'ALL') query.append('priceListType', mode);
+    if (params?.startDate) query.append('startDate', params.startDate);
+    if (params?.endDate) query.append('endDate', params.endDate);
+    const queryString = query.toString();
+    return request<any[]>(`/particulars${queryString ? `?${queryString}` : ''}`);
+  },
+  getSalesSummary: () => request<SalesSummaryData>('/particulars/reports/summary'),
   getNextBillNo: () => request<{ nextBillNo: string }>('/particulars/next-bill-no'),
   getById: (id: string) => request<any>(`/particulars/${id}`),
   create: (data: any) => request<any>('/particulars', { method: 'POST', body: JSON.stringify(data) }),

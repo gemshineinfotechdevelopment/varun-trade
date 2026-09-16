@@ -2,9 +2,14 @@ import React from 'react';
 import { getStoredSettings } from './SettingsPage';
 
 export interface BillPrintProduct {
+  productId?: string;
+  sku?: string;
   particular: string;
   quantity: string | number;
-  rate: string | number;
+  rate: string | number; // MRP or selling rate
+  discountPercentage?: string | number;
+  discountAmount?: string | number;
+  netRate?: string | number;
   pktUnit: string | number;
   amount: string | number;
 }
@@ -17,6 +22,8 @@ export interface BillPrintData {
   customerAddress?: string;
   customerGst?: string;
   companyName: string;
+  pricingMode?: '90_PERCENT' | 'CUSTOM' | string;
+  customDiscountPercent?: number;
   preparedBy?: string;
   phone?: string;
   email?: string;
@@ -85,7 +92,7 @@ export const BillPrintTemplate: React.FC<BillPrintTemplateProps> = ({ bill }) =>
   const transportAmt = (!isNaN(Number(rawTransportStr)) && transNum > 0) ? transNum : 0;
   const transportDisplayName = (!rawTransportStr || rawTransportStr === '0' || rawTransportStr === '-') ? '-' : rawTransportStr;
 
-  // Packing calculation - amount by default, only percentage if explicitly formatted with %
+  // Packing calculation
   const rawPackStr = String(bill.packing ?? '').trim();
   const cleanPack = rawPackStr.replace(/[^0-9.]/g, '');
   const packNum = parseFloat(cleanPack) || 0;
@@ -133,16 +140,20 @@ export const BillPrintTemplate: React.FC<BillPrintTemplateProps> = ({ bill }) =>
     bill.companyName !== 'Dheeksha Trade Link' &&
     bill.companyName.trim() !== ''
       ? bill.companyName
-      : storeSettings.companyName || 'Dheeksha Trade Link';
+      : storeSettings.companyName || 'Balaji Crackers & Fireworks';
 
   const isTaxActive = Boolean(storeSettings.enableTax) || (parseFloat(String(bill.tax || '0').replace(/[^0-9.]/g, '')) > 0);
-  const cityLine = `${storeSettings.city || 'Sivakasi'}${storeSettings.state ? `, ${storeSettings.state}` : ''}`;
+  const cityLine = `${storeSettings.city || 'Sivakasi'}${storeSettings.state ? `, ${storeSettings.state}` : ', Tamil Nadu'}`;
   const gstinLine = (isTaxActive && storeSettings.gstin) ? `GSTIN: ${storeSettings.gstin}` : '';
   const phoneLine = storeSettings.phone ? `Mobile: ${storeSettings.phone}` : '';
   const metaContact = [gstinLine, phoneLine].filter(Boolean).join(' | ');
 
-  // Check for uploaded Lorry / Godown receipt (pdfData or pdfUrl)
   const receiptSrc = bill.pdfData || bill.pdfUrl || '';
+
+  const isCustomMode = bill.pricingMode === 'CUSTOM';
+  const pricingModeText = isCustomMode
+    ? `CUSTOM DISCOUNT PRICE LIST${bill.customDiscountPercent ? ` (${bill.customDiscountPercent}%)` : ''}`
+    : '90% DISCOUNT PRICE LIST';
 
   return (
     <div
@@ -158,7 +169,7 @@ export const BillPrintTemplate: React.FC<BillPrintTemplateProps> = ({ bill }) =>
         boxSizing: 'border-box',
       }}
     >
-      {/* Top Header: Centered Company Name & Logo without floating extra text */}
+      {/* Top Header */}
       <div
         style={{
           textAlign: 'center',
@@ -177,7 +188,7 @@ export const BillPrintTemplate: React.FC<BillPrintTemplateProps> = ({ bill }) =>
         )}
         <h1
           style={{
-            fontSize: '26px',
+            fontSize: '24px',
             fontWeight: 800,
             color: '#000000',
             margin: '0 0 2px 0',
@@ -197,20 +208,20 @@ export const BillPrintTemplate: React.FC<BillPrintTemplateProps> = ({ bill }) =>
         )}
       </div>
 
-      {/* Bill Metadata Block with Boxed Lines */}
+      {/* Bill Metadata Block */}
       <table
         style={{
           width: '100%',
           borderCollapse: 'collapse',
           borderBottom: '1.5px solid #000000',
-          fontSize: '12.5px',
+          fontSize: '12px',
         }}
       >
         <tbody>
           <tr>
             <td style={{ width: '50%', border: '1px solid #000000', padding: '5px 10px' }}>
               <span style={{ color: '#475569', fontWeight: 500, marginRight: '4px' }}>Bill No:</span>
-              <strong style={{ color: '#000000' }}>{bill.billNo || '-'}</strong>
+              <strong style={{ color: '#000000' }}>#{bill.billNo || '-'}</strong>
             </td>
             <td style={{ width: '50%', border: '1px solid #000000', padding: '5px 10px' }}>
               <span style={{ color: '#475569', fontWeight: 500, marginRight: '4px' }}>Date:</span>
@@ -221,52 +232,65 @@ export const BillPrintTemplate: React.FC<BillPrintTemplateProps> = ({ bill }) =>
             <td style={{ border: '1px solid #000000', padding: '5px 10px' }}>
               <span style={{ color: '#475569', fontWeight: 500, marginRight: '4px' }}>Customer Name:</span>
               <strong style={{ color: '#000000' }}>{bill.customerName || '-'}</strong>
+              {bill.customerPhone && (
+                <span style={{ color: '#475569', marginLeft: '6px' }}>({bill.customerPhone})</span>
+              )}
             </td>
             <td style={{ border: '1px solid #000000', padding: '5px 10px' }}>
-              <span style={{ color: '#475569', fontWeight: 500, marginRight: '4px' }}>Company Name:</span>
-              <strong style={{ color: '#000000' }}>{displayCompanyName}</strong>
+              <span style={{ color: '#475569', fontWeight: 500, marginRight: '4px' }}>Pricing List:</span>
+              <strong style={{ color: isCustomMode ? '#1E40AF' : '#B91C1C', textTransform: 'uppercase' }}>
+                {pricingModeText}
+              </strong>
             </td>
           </tr>
+          {bill.customerAddress && (
+            <tr>
+              <td colSpan={2} style={{ border: '1px solid #000000', padding: '5px 10px' }}>
+                <span style={{ color: '#475569', fontWeight: 500, marginRight: '4px' }}>Address:</span>
+                <span>{bill.customerAddress}</span>
+              </td>
+            </tr>
+          )}
           <tr>
             <td style={{ border: '1px solid #000000', padding: '5px 10px' }}>
               <span style={{ color: '#475569', fontWeight: 500, marginRight: '4px' }}>Transport:</span>
-              <strong style={{ color: '#000000' }}>{transportDisplayName}</strong>
+              <strong>{transportDisplayName}</strong>
             </td>
             <td style={{ border: '1px solid #000000', padding: '5px 10px' }}>
-              <span style={{ color: '#475569', fontWeight: 500, marginRight: '4px' }}>Total No. of Cases:</span>
-              <strong style={{ color: '#000000' }}>{computedCases}</strong>
+              <span style={{ color: '#475569', fontWeight: 500, marginRight: '4px' }}>Total Cases:</span>
+              <strong>{computedCases}</strong>
             </td>
           </tr>
         </tbody>
       </table>
 
-      {/* Products Table with Boxed Rows */}
+      {/* Products Table */}
       <table
         style={{
           width: '100%',
           borderCollapse: 'collapse',
           borderBottom: '1.5px solid #000000',
-          fontSize: '12px',
+          fontSize: '11.5px',
         }}
       >
         <thead>
           <tr style={{ backgroundColor: '#F8FAFC' }}>
-            <th style={{ border: '1px solid #000000', padding: '6px 8px', textAlign: 'center', width: '45px', fontWeight: 700 }}>
-              Si.No
+            <th style={{ border: '1px solid #000000', padding: '5px 6px', textAlign: 'center', width: '40px', fontWeight: 700 }}>
+              S.No
             </th>
-            <th style={{ border: '1px solid #000000', padding: '6px 8px', textAlign: 'left', fontWeight: 700 }}>
-              Particular
+            <th style={{ border: '1px solid #000000', padding: '5px 6px', textAlign: 'left', fontWeight: 700 }}>
+              Particulars / Cracker Item
             </th>
-            <th style={{ border: '1px solid #000000', padding: '6px 8px', textAlign: 'center', width: '75px', fontWeight: 700 }}>
-              Quantity
+            <th style={{ border: '1px solid #000000', padding: '5px 6px', textAlign: 'center', width: '60px', fontWeight: 700 }}>
+              Qty
             </th>
-            <th style={{ border: '1px solid #000000', padding: '6px 8px', textAlign: 'right', width: '85px', fontWeight: 700 }}>
+            <th style={{ border: '1px solid #000000', padding: '5px 6px', textAlign: 'center', width: '60px', fontWeight: 700 }}>
+              Per
+            </th>
+            <th style={{ border: '1px solid #000000', padding: '5px 6px', textAlign: 'right', width: '75px', fontWeight: 700 }}>
               Rate (₹)
             </th>
-            <th style={{ border: '1px solid #000000', padding: '6px 8px', textAlign: 'center', width: '85px', fontWeight: 700 }}>
-              Pkt / Unit
-            </th>
-            <th style={{ border: '1px solid #000000', padding: '6px 8px', textAlign: 'right', width: '105px', fontWeight: 700 }}>
+            <th style={{ border: '1px solid #000000', padding: '5px 6px', textAlign: 'right', width: '85px', fontWeight: 700 }}>
               Amount (₹)
             </th>
           </tr>
@@ -284,16 +308,18 @@ export const BillPrintTemplate: React.FC<BillPrintTemplateProps> = ({ bill }) =>
               const numRate = parseFloat(String(item.rate).replace(/,/g, '')) || 0;
               return (
                 <tr key={idx}>
-                  <td style={{ border: '1px solid #000000', padding: '6px 8px', textAlign: 'center' }}>{idx + 1}</td>
-                  <td style={{ border: '1px solid #000000', padding: '6px 8px', fontWeight: 600 }}>{item.particular || '-'}</td>
-                  <td style={{ border: '1px solid #000000', padding: '6px 8px', textAlign: 'center' }}>{item.quantity || '-'}</td>
-                  <td style={{ border: '1px solid #000000', padding: '6px 8px', textAlign: 'right' }}>
+                  <td style={{ border: '1px solid #000000', padding: '5px 6px', textAlign: 'center' }}>{idx + 1}</td>
+                  <td style={{ border: '1px solid #000000', padding: '5px 6px', fontWeight: 600 }}>
+                    {item.sku ? `[${item.sku}] ` : ''}{item.particular || '-'}
+                  </td>
+                  <td style={{ border: '1px solid #000000', padding: '5px 6px', textAlign: 'center' }}>{item.quantity || '-'}</td>
+                  <td style={{ border: '1px solid #000000', padding: '5px 6px', textAlign: 'center' }}>
+                    {item.pktUnit && item.pktUnit !== '-' ? item.pktUnit : 'Box'}
+                  </td>
+                  <td style={{ border: '1px solid #000000', padding: '5px 6px', textAlign: 'right' }}>
                     {numRate > 0 ? numRate.toFixed(2) : (item.rate || '-')}
                   </td>
-                  <td style={{ border: '1px solid #000000', padding: '6px 8px', textAlign: 'center' }}>
-                    {item.pktUnit && item.pktUnit !== '-' ? item.pktUnit : ''}
-                  </td>
-                  <td style={{ border: '1px solid #000000', padding: '6px 8px', textAlign: 'right', fontWeight: 700 }}>
+                  <td style={{ border: '1px solid #000000', padding: '5px 6px', textAlign: 'right', fontWeight: 700 }}>
                     {numAmt.toFixed(2)}
                   </td>
                 </tr>
@@ -303,7 +329,7 @@ export const BillPrintTemplate: React.FC<BillPrintTemplateProps> = ({ bill }) =>
         </tbody>
       </table>
 
-      {/* Bottom Split Section: Left (Receipt Image or Signatory Box) & Right (Calculation Summary Table) */}
+      {/* Bottom Summary Section */}
       <div
         style={{
           width: '100%',
@@ -312,138 +338,101 @@ export const BillPrintTemplate: React.FC<BillPrintTemplateProps> = ({ bill }) =>
           alignItems: 'stretch',
         }}
       >
-        {/* Left Column: Uploaded Receipt Image or Authorized Signatory */}
-        {receiptSrc ? (
-          <div
-            style={{
-              flex: '1 1 50%',
-              borderRight: '1.5px solid #000000',
-              padding: '8px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxSizing: 'border-box',
-              minHeight: '140px',
-            }}
-          >
-            {receiptSrc.startsWith('data:image') || receiptSrc.match(/\.(jpeg|jpg|png|webp|gif)$/i) || !receiptSrc.includes('application/pdf') ? (
-              <img
-                src={receiptSrc}
-                alt="Transport Receipt"
-                style={{
-                  maxWidth: '100%',
-                  maxHeight: '180px',
-                  objectFit: 'contain',
-                  display: 'block',
-                }}
-              />
-            ) : (
-              <iframe
-                src={receiptSrc}
-                title="Transport Receipt PDF"
-                style={{
-                  width: '100%',
-                  height: '180px',
-                  border: 'none',
-                }}
-              />
+        {/* Left Column: Signatory Box */}
+        <div
+          style={{
+            flex: '1 1 50%',
+            borderRight: '1.5px solid #000000',
+            padding: '12px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            boxSizing: 'border-box',
+            minHeight: '130px',
+          }}
+        >
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: 600, color: '#475569' }}>
+              Payment Mode: <strong>{bill.paymentMode || 'CASH'}</strong> | Status: <strong>{bill.paymentStatus || 'PAID'}</strong>
+            </div>
+            {bill.notes && (
+              <div style={{ fontSize: '11px', color: '#64748B', marginTop: '4px' }}>
+                Note: {bill.notes}
+              </div>
+            )}
+            {receiptSrc && (
+              <div style={{ marginTop: '8px' }}>
+                <img
+                  src={receiptSrc}
+                  alt="Receipt attachment"
+                  style={{ maxHeight: '80px', maxWidth: '100%', objectFit: 'contain' }}
+                />
+              </div>
             )}
           </div>
-        ) : (
-          <div
-            style={{
-              flex: '1 1 50%',
-              borderRight: '1.5px solid #000000',
-              padding: '12px 16px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'flex-end',
-              boxSizing: 'border-box',
-              minHeight: '140px',
-            }}
-          >
-            <div style={{ fontSize: '11px', color: '#64748B', marginBottom: '24px' }}>
-              Thank you for your business!
-            </div>
-            <div
-              style={{
-                fontSize: '11.5px',
-                fontWeight: 700,
-                color: '#000000',
-                borderTop: '1px dashed #000000',
-                display: 'inline-block',
-                paddingTop: '4px',
-                width: '170px',
-              }}
-            >
-              Authorized Signatory
+          <div style={{ textAlign: 'center', marginTop: '20px' }}>
+            <div style={{ borderTop: '1px dashed #000000', width: '160px', margin: '0 auto 4px auto' }}></div>
+            <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase' }}>
+              For {displayCompanyName}
             </div>
           </div>
-        )}
+        </div>
 
-        {/* Right Column: Calculation Summary Table */}
-        <div style={{ flex: '1 1 50%', padding: 0, boxSizing: 'border-box' }}>
+        {/* Right Column: Calculations */}
+        <div style={{ flex: '1 1 50%', boxSizing: 'border-box' }}>
           <table
             style={{
               width: '100%',
               borderCollapse: 'collapse',
-              fontSize: '12.5px',
+              fontSize: '11.5px',
             }}
           >
             <tbody>
               <tr>
-                <td style={{ border: '1px solid #000000', padding: '5px 10px', fontWeight: 500, color: '#334155' }}>
-                  Particular Amount
-                </td>
-                <td style={{ border: '1px solid #000000', padding: '5px 10px', textAlign: 'right', fontWeight: 600, color: '#000000' }}>
-                  {subtotal.toFixed(2)}
+                <td style={{ border: '1px solid #000000', padding: '5px 8px', fontWeight: 600 }}>Sub Total:</td>
+                <td style={{ border: '1px solid #000000', padding: '5px 8px', textAlign: 'right', fontWeight: 700 }}>
+                  ₹{subtotal.toFixed(2)}
                 </td>
               </tr>
               {discountAmt > 0 && (
                 <tr>
-                  <td style={{ border: '1px solid #000000', padding: '5px 10px', fontWeight: 500, color: '#334155' }}>
-                    {discountLabel}
+                  <td style={{ border: '1px solid #000000', padding: '5px 8px', color: '#DC2626', fontWeight: 600 }}>
+                    {discountLabel}:
                   </td>
-                  <td style={{ border: '1px solid #000000', padding: '5px 10px', textAlign: 'right', fontWeight: 600, color: '#000000' }}>
-                    -{discountAmt.toFixed(2)}
+                  <td style={{ border: '1px solid #000000', padding: '5px 8px', textAlign: 'right', color: '#DC2626', fontWeight: 700 }}>
+                    -₹{discountAmt.toFixed(2)}
                   </td>
                 </tr>
               )}
               {transportAmt > 0 && (
                 <tr>
-                  <td style={{ border: '1px solid #000000', padding: '5px 10px', fontWeight: 500, color: '#334155' }}>
-                    Transport Charges
-                  </td>
-                  <td style={{ border: '1px solid #000000', padding: '5px 10px', textAlign: 'right', fontWeight: 600, color: '#000000' }}>
-                    +{transportAmt.toFixed(2)}
+                  <td style={{ border: '1px solid #000000', padding: '5px 8px', fontWeight: 600 }}>Transport:</td>
+                  <td style={{ border: '1px solid #000000', padding: '5px 8px', textAlign: 'right' }}>
+                    ₹{transportAmt.toFixed(2)}
                   </td>
                 </tr>
               )}
               {packingAmt > 0 && (
                 <tr>
-                  <td style={{ border: '1px solid #000000', padding: '5px 10px', fontWeight: 500, color: '#334155' }}>
-                    {packingLabel}
-                  </td>
-                  <td style={{ border: '1px solid #000000', padding: '5px 10px', textAlign: 'right', fontWeight: 600, color: '#000000' }}>
-                    +{packingAmt.toFixed(2)}
+                  <td style={{ border: '1px solid #000000', padding: '5px 8px', fontWeight: 600 }}>{packingLabel}:</td>
+                  <td style={{ border: '1px solid #000000', padding: '5px 8px', textAlign: 'right' }}>
+                    ₹{packingAmt.toFixed(2)}
                   </td>
                 </tr>
               )}
               {taxAmt > 0 && (
                 <tr>
-                  <td style={{ border: '1px solid #000000', padding: '5px 10px', fontWeight: 500, color: '#334155' }}>
-                    {taxLabel}
-                  </td>
-                  <td style={{ border: '1px solid #000000', padding: '5px 10px', textAlign: 'right', fontWeight: 600, color: '#000000' }}>
-                    +{taxAmt.toFixed(2)}
+                  <td style={{ border: '1px solid #000000', padding: '5px 8px', fontWeight: 600 }}>{taxLabel}:</td>
+                  <td style={{ border: '1px solid #000000', padding: '5px 8px', textAlign: 'right' }}>
+                    ₹{taxAmt.toFixed(2)}
                   </td>
                 </tr>
               )}
               <tr style={{ backgroundColor: '#F8FAFC' }}>
-                <td style={{ border: '1px solid #000000', borderTop: '1.5px solid #000000', padding: '7px 10px', fontWeight: 800 }}>
-                  Total Amount
+                <td style={{ border: '1.5px solid #000000', padding: '6px 8px', fontWeight: 800, fontSize: '13px' }}>
+                  NET TOTAL:
                 </td>
-                <td style={{ border: '1px solid #000000', borderTop: '1.5px solid #000000', padding: '7px 10px', textAlign: 'right', fontSize: '13.5px', fontWeight: 800 }}>
+                <td style={{ border: '1.5px solid #000000', padding: '6px 8px', textAlign: 'right', fontWeight: 900, fontSize: '14px', color: '#000000' }}>
                   {formattedTotal}
                 </td>
               </tr>
@@ -454,3 +443,5 @@ export const BillPrintTemplate: React.FC<BillPrintTemplateProps> = ({ bill }) =>
     </div>
   );
 };
+
+export default BillPrintTemplate;

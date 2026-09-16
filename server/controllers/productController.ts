@@ -26,32 +26,14 @@ export const getProductById = async (req: Request, res: Response, next: NextFunc
 
 export const createProduct = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const product = await Product.create(req.body);
+    const nextSlNo = (await Product.countDocuments()) + 1;
+    const cleanSku = (req.body.sku || `CK-${String(nextSlNo).padStart(3, '0')}`).trim().toUpperCase();
 
-    // Sync to PriceList
-    try {
-      const cleanName = (product.name || '').trim();
-      const existingPrice = await PriceList.findOne({
-        itemName: { $regex: new RegExp(`^${cleanName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
-      });
-
-      if (!existingPrice && cleanName) {
-        const totalCount = await PriceList.countDocuments();
-        await PriceList.create({
-          slNo: totalCount + 1,
-          itemName: cleanName,
-          category: product.category || 'General',
-          unit: product.unit || 'Box',
-          mrp: product.mrp || 0,
-          rate: product.rate || 0,
-          stock: 0,
-          effectiveDate: new Date().toISOString().split('T')[0],
-          batchName: 'Product Sync',
-        });
-      }
-    } catch (syncErr) {
-      console.warn('[Product Create Sync Warning]:', syncErr);
-    }
+    const product = await Product.create({
+      ...req.body,
+      slNo: req.body.slNo || nextSlNo,
+      sku: cleanSku,
+    });
 
     res.status(201).json({ success: true, data: product });
   } catch (error) {
@@ -87,8 +69,6 @@ export const updateProduct = async (req: Request, res: Response, next: NextFunct
           ...(product.name && { itemName: product.name.trim() }),
           ...(product.category && { category: product.category }),
           ...(product.unit && { unit: product.unit }),
-          ...(product.rate !== undefined && { rate: Number(product.rate) }),
-          ...(product.mrp !== undefined && { mrp: Number(product.mrp) }),
         }
       );
     } catch (syncErr) {

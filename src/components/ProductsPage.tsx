@@ -69,14 +69,15 @@ export const ProductsPage: FC = () => {
       const [prodsData, catsData, priceData] = await Promise.all([
         ProductsApi.getAll().catch(() => []),
         CategoriesApi.getAll().catch(() => []),
-        PriceListsApi.getAll().catch(() => []),
+        PriceListsApi.getByType('90_PERCENT').catch(() => []),
       ]);
 
       const priceMap = new Map<string, any>();
       if (Array.isArray(priceData)) {
         priceData.forEach((item: any) => {
-          if (item.itemName) {
-            priceMap.set(item.itemName.toLowerCase().trim(), item);
+          const name = item.productName || item.itemName;
+          if (name) {
+            priceMap.set(name.toLowerCase().trim(), item);
           }
         });
       }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, type FC } from 'react';
+import { useState, useEffect, useMemo, type FC, type KeyboardEvent } from 'react';
 import {
   Box,
   Typography,
@@ -13,1042 +13,1425 @@ import {
   TableHead,
   TableRow,
   IconButton,
-  Tooltip,
-  CircularProgress,
   Chip,
   Grid,
   Divider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  FormControl,
+  Select,
+  MenuItem,
+  InputLabel,
+  Snackbar,
+  Alert,
 } from '@mui/material';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import PrintOutlinedIcon from '@mui/icons-material/PrintOutlined';
 import ClearRoundedIcon from '@mui/icons-material/ClearRounded';
-import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
+import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
+import ShoppingCartRoundedIcon from '@mui/icons-material/ShoppingCartRounded';
+import ReceiptLongRoundedIcon from '@mui/icons-material/ReceiptLongRounded';
 import {
   CustomersApi,
   CompaniesApi,
-  ProductsApi,
-  PriceListsApi,
   ParticularsApi,
+  CustomDiscountsApi,
+  PriceListsApi,
+  type CustomDiscountItem,
+  type PriceListItem,
+  type PriceListType,
 } from '../services/api';
 import { getStoredSettings } from './SettingsPage';
 import { BillPrintModal } from './BillPrintModal';
 import type { BillPrintData } from './BillPrintTemplate';
 
-interface ProductRowItem {
-  id: string;
-  particular: string;
-  quantity: string;
-  rate: string;
-  pktUnit: string;
-  amount: string;
-}
+export type BillingMode = '90_PERCENT' | 'CUSTOM';
 
-interface ProductCatalogOption {
+export interface CartItem {
   id: string;
-  name: string;
-  category?: string;
-  rate?: number;
-  mrp?: number;
-  unit?: string;
+  productId?: string;
+  sku: string;
+  particular: string;
+  category: string;
+  quantity: string;
+  rate: string; // Original MRP Rate
+  discountPercentage: string;
+  discountAmount: string;
+  netRate: string; // Net selling price
+  pktUnit: string;
+  amount: string; // Line Total (netRate * qty)
+  availableStock?: number;
 }
 
 interface ParticularsPageProps {
   initialCustomerName?: string;
 }
 
-const DRAFT_BILL_STORAGE_KEY = 'dheeksha_draft_bill';
-
-interface DraftBillState {
-  customerName?: string;
-  billNo?: string;
-  billDate?: string;
-  discount?: string;
-  transport?: string;
-  packing?: string;
-  tax?: string;
-  productRows?: ProductRowItem[];
-}
-
-const getSavedDraft = (): DraftBillState => {
-  try {
-    const raw = localStorage.getItem(DRAFT_BILL_STORAGE_KEY);
-    if (raw) {
-      return JSON.parse(raw);
-    }
-  } catch (e) {
-    console.error('Failed to load draft bill from localStorage', e);
-  }
-  return {};
-};
-
 export const ParticularsPage: FC<ParticularsPageProps> = ({ initialCustomerName }) => {
-  const [storeSettings, setStoreSettings] = useState(() => getStoredSettings());
-  const draft = useMemo(() => getSavedDraft(), []);
+  const [storeSettings] = useState(() => getStoredSettings());
+
+  // Pricing Mode State (90% DISCOUNT vs CUSTOM DISCOUNT)
+  const [pricingMode, setPricingMode] = useState<BillingMode>('90_PERCENT');
+  const [customDiscountPercent, setCustomDiscountPercent] = useState<number>(40);
+  const [availableCustomDiscounts, setAvailableCustomDiscounts] = useState<CustomDiscountItem[]>([]);
+
+  // Mode Switch Confirmation Modal State
+  const [pendingModeSwitch, setPendingModeSwitch] = useState<{
+    targetMode: BillingMode;
+    targetCustomPercent?: number;
+  } | null>(null);
+  const [modeConfirmDialogOpen, setModeConfirmDialogOpen] = useState(false);
 
   // Dropdown options
-  const [customerOptions, setCustomerOptions] = useState<{ id: string; name: string }[]>([]);
-  const [, setCompanyOptions] = useState<{ id: string; name: string }[]>([]);
-  const [productOptions, setProductOptions] = useState<ProductCatalogOption[]>([]);
+  const [customerOptions, setCustomerOptions] = useState<{ id: string; name: string; phone?: string; address?: string; gst?: string }[]>([]);
+  const [companyOptions, setCompanyOptions] = useState<{ id: string; name: string }[]>([]);
+  const [billingProducts, setBillingProducts] = useState<PriceListItem[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(false);
 
-  // Bill Form State (Restores from Draft if page was refreshed)
-  const [customerName, setCustomerName] = useState<string>(() => {
-    return initialCustomerName || draft.customerName || '';
-  });
-  const [company, setCompany] = useState<string>(() => {
-    return storeSettings.companyName || 'Dheeksha Trade Link';
-  });
-  const [billNo, setBillNo] = useState<string>(() => draft.billNo || '');
+  // Bill Customer & Metadata State
+  const [customerName, setCustomerName] = useState<string>(() => initialCustomerName || '');
+  const [customerPhone, setCustomerPhone] = useState<string>('');
+  const [customerAddress, setCustomerAddress] = useState<string>('');
+  const [customerGst, setCustomerGst] = useState<string>('');
+  const [company, setCompany] = useState<string>(() => storeSettings.companyName || 'Balaji Crackers & Fireworks');
+  const [billNo, setBillNo] = useState<string>('');
   const [billDate, setBillDate] = useState<string>(() => {
-    if (draft.billDate) return draft.billDate;
     const today = new Date();
     return today.toLocaleDateString('en-GB').replace(/\//g, '-');
   });
-  const [discount, setDiscount] = useState<string>(() => draft.discount ?? '0');
-  const [transport, setTransport] = useState<string>(() => draft.transport ?? '0');
-  const [packing, setPacking] = useState<string>(() => draft.packing ?? '0');
-  const [tax, setTax] = useState<string>(() => draft.tax ?? '0');
 
-  // Product Entry Form State
-  const [selectedProduct, setSelectedProduct] = useState<string>('');
-  const [quantity, setQuantity] = useState<string>('1');
-  const [rate, setRate] = useState<string>('0');
-  const [unit, setUnit] = useState<string>('Box');
-  const [productRows, setProductRows] = useState<ProductRowItem[]>(() => draft.productRows || []);
+  // Additional Charges & Taxes
+  const [discount, setDiscount] = useState<string>('0');
+  const [transport, setTransport] = useState<string>('0');
+  const [packing, setPacking] = useState<string>('0');
+  const [tax, setTax] = useState<string>('0');
+
+  // Payment State
+  const [paymentStatus, setPaymentStatus] = useState<'PAID' | 'UNPAID' | 'PARTIAL'>('PAID');
+  const [paymentMode, setPaymentMode] = useState<'CASH' | 'UPI' | 'BANK' | 'CREDIT'>('CASH');
+  const [paidAmount, setPaidAmount] = useState<string>('');
+
+  // Cart & Line Items State
+  const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [selectedProductOption, setSelectedProductOption] = useState<PriceListItem | null>(null);
+  const [entryQty, setEntryQty] = useState<string>('1');
+  const [entryMrpRate, setEntryMrpRate] = useState<string>('0');
+  const [entryDiscountPercent, setEntryDiscountPercent] = useState<string>('90');
+  const [entryNetRate, setEntryNetRate] = useState<string>('0');
+  const [entryUnit, setEntryUnit] = useState<string>('Box');
+
+  // Saving & Print Modal
   const [savingBill, setSavingBill] = useState<boolean>(false);
-
-  // Print Preview Modal State
   const [printModalOpen, setPrintModalOpen] = useState<boolean>(false);
-  const [selectedBillForPrint, setSelectedBillForPrint] = useState<BillPrintData | null>(null);
+  const [billToPrint, setBillToPrint] = useState<BillPrintData | null>(null);
 
-  // Auto-persist draft bill to localStorage
-  useEffect(() => {
-    const draftPayload: DraftBillState = {
-      customerName,
-      billNo,
-      billDate,
-      discount,
-      transport,
-      packing,
-      tax,
-      productRows,
-    };
+  // Toast
+  const [toast, setToast] = useState<{ open: boolean; message: string; severity: 'success' | 'info' | 'warning' | 'error' }>({
+    open: false,
+    message: '',
+    severity: 'success',
+  });
+
+  // Load initial data
+  const fetchData = async () => {
     try {
-      localStorage.setItem(DRAFT_BILL_STORAGE_KEY, JSON.stringify(draftPayload));
-    } catch (e) {
-      console.warn('Failed to auto-save draft bill to localStorage', e);
-    }
-  }, [customerName, billNo, billDate, discount, transport, packing, tax, productRows]);
-
-  // Listen for settings update (when user updates company name/logo/tax settings in Settings)
-  useEffect(() => {
-    const handleSettingsUpdate = () => {
-      const updated = getStoredSettings();
-      setStoreSettings(updated);
-      setCompany(updated.companyName || 'Dheeksha Trade Link');
-      if (updated.enableTax && (!tax || tax === '0')) {
-        setTax(updated.defaultTaxRate || '0');
-      } else if (!updated.enableTax) {
-        setTax('0');
-      }
-    };
-    window.addEventListener('dheeksha_settings_updated', handleSettingsUpdate);
-    return () => {
-      window.removeEventListener('dheeksha_settings_updated', handleSettingsUpdate);
-    };
-  }, [tax]);
-
-  // Load Dropdown Options (Customers, Companies, Unified Products & Price List)
-  const loadOptions = async () => {
-    try {
-      const [custRes, compRes, prodRes, priceRes] = await Promise.all([
-        CustomersApi.getAll().catch(() => []),
-        CompaniesApi.getAll().catch(() => []),
-        ProductsApi.getAll().catch(() => []),
-        PriceListsApi.getAll().catch(() => []),
+      const [custs, comps, discounts, nextBill] = await Promise.all([
+        CustomersApi.getAll(),
+        CompaniesApi.getAll(),
+        CustomDiscountsApi.getAll(),
+        ParticularsApi.getNextBillNo(),
       ]);
 
-      if (Array.isArray(custRes) && custRes.length > 0) {
-        const mapped = custRes.map((c: any) => ({ id: c._id || c.id, name: c.name }));
-        setCustomerOptions(mapped);
+      if (custs) {
+        setCustomerOptions(
+          custs.map((c: any) => ({
+            id: c._id || c.id,
+            name: c.name,
+            phone: c.mobile || c.phone || '',
+            address: c.address || '',
+            gst: c.gst || '',
+          }))
+        );
       }
 
-      if (Array.isArray(compRes) && compRes.length > 0) {
-        const mapped = compRes.map((c: any) => ({ id: c._id || c.id, name: c.name }));
-        setCompanyOptions(mapped);
-        if (mapped.length > 0 && (!company || company === 'Dheeksha Trade' || company === 'Dheeksha Trade Link')) {
-          setCompany(storeSettings.companyName || mapped[0].name);
+      if (comps && comps.length > 0) {
+        setCompanyOptions(comps.map((co: any) => ({ id: co._id || co.id, name: co.name })));
+      }
+
+      if (discounts && discounts.length > 0) {
+        const activeDiscounts = discounts.filter((d) => d.isActive);
+        setAvailableCustomDiscounts(activeDiscounts.length > 0 ? activeDiscounts : discounts);
+        if (activeDiscounts.length > 0 && !activeDiscounts.some((d) => d.percentage === customDiscountPercent)) {
+          setCustomDiscountPercent(activeDiscounts[0].percentage);
         }
       }
 
-      // Merge Products & Price List
-      const prodMap = new Map<string, ProductCatalogOption>();
-
-      if (Array.isArray(prodRes)) {
-        prodRes.forEach((p: any) => {
-          const key = (p.name || '').trim();
-          if (key) {
-            prodMap.set(key.toLowerCase(), {
-              id: p._id || p.id,
-              name: key,
-              category: p.category || 'General',
-              rate: p.rate || 0,
-              mrp: p.mrp || 0,
-              unit: p.unit || 'Box',
-            });
-          }
-        });
-      }
-
-      if (Array.isArray(priceRes)) {
-        priceRes.forEach((item: any) => {
-          const key = (item.itemName || '').trim();
-          if (key) {
-            const existing = prodMap.get(key.toLowerCase());
-            prodMap.set(key.toLowerCase(), {
-              id: item._id || item.id || existing?.id || key,
-              name: key,
-              category: item.category || existing?.category || 'General',
-              rate: item.rate !== undefined && item.rate > 0 ? item.rate : (existing?.rate || 0),
-              mrp: item.mrp !== undefined && item.mrp > 0 ? item.mrp : (existing?.mrp || 0),
-              unit: item.unit || existing?.unit || 'Box',
-            });
-          }
-        });
-      }
-
-      const mergedList = Array.from(prodMap.values());
-      setProductOptions(mergedList);
-      if (mergedList.length > 0 && !selectedProduct) {
-        setSelectedProduct(mergedList[0].name);
-        setRate(String(mergedList[0].rate || 0));
-        setUnit(mergedList[0].unit || 'Box');
+      if (nextBill?.nextBillNo && !billNo) {
+        setBillNo(nextBill.nextBillNo);
       }
     } catch (err) {
-      console.error('Failed to load billing options:', err);
+      console.error('Error fetching initial billing data', err);
     }
   };
 
-  // Fetch Next Bill Number
-  const fetchNextBillNo = async () => {
+  const fetchProductsForMode = async (mode: BillingMode) => {
+    setLoadingProducts(true);
     try {
-      const res = await ParticularsApi.getNextBillNo();
-      if (res?.nextBillNo) {
-        setBillNo(res.nextBillNo);
-      } else {
-        setBillNo(`INV-${Date.now().toString().slice(-4)}`);
-      }
-    } catch {
-      setBillNo(`INV-${Date.now().toString().slice(-4)}`);
+      const prods = await PriceListsApi.getBillingProducts(mode as PriceListType);
+      setBillingProducts(prods || []);
+    } catch (err) {
+      console.error('Error loading billing products', err);
+    } finally {
+      setLoadingProducts(false);
     }
-  };
-
-  // Always keep date current today
-  const refreshDate = () => {
-    const today = new Date();
-    setBillDate(today.toLocaleDateString('en-GB').replace(/\//g, '-'));
   };
 
   useEffect(() => {
-    loadOptions();
-    fetchNextBillNo();
-    refreshDate();
+    fetchData();
+    fetchProductsForMode(pricingMode);
   }, []);
 
-  // Update customer name if prop changes
-  useEffect(() => {
-    if (initialCustomerName) {
-      setCustomerName(initialCustomerName);
-    }
-  }, [initialCustomerName]);
-
-  // Add Product Item to Bill Row
-  const handleAddProductItem = () => {
-    if (!selectedProduct.trim()) {
-      alert('Please select or enter a product name');
+  // Update entry form prices when product changes
+  const updateEntryFormPrices = (prod: PriceListItem | null) => {
+    if (!prod) {
+      setEntryMrpRate('0');
+      setEntryDiscountPercent(pricingMode === '90_PERCENT' ? '90' : customDiscountPercent.toString());
+      setEntryNetRate('0');
+      setEntryUnit('Box');
       return;
     }
-    const qNum = parseFloat(quantity) || 1;
-    const rNum = parseFloat(rate) || 0;
-    const amt = (qNum * rNum).toFixed(2);
 
-    const newRow: ProductRowItem = {
-      id: `row-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-      particular: selectedProduct.trim(),
-      quantity: String(qNum),
-      rate: String(rNum),
-      pktUnit: unit || 'Box',
-      amount: amt,
-    };
+    setEntryUnit(prod.unit || 'Box');
+    const mrp = Number(prod.rate || 0);
+    const discPct = Number(prod.discountPercentage ?? (pricingMode === '90_PERCENT' ? 90 : customDiscountPercent));
+    const net = Number(prod.netRate ?? Math.max(0, mrp * (1 - discPct / 100)));
 
-    setProductRows((prev) => [...prev, newRow]);
-    setQuantity('1');
+    setEntryMrpRate(mrp.toString());
+    setEntryDiscountPercent(discPct.toString());
+    setEntryNetRate(net.toString());
   };
 
-  // Delete product row from current bill
-  const handleDeleteRow = (id: string) => {
-    setProductRows((prev) => prev.filter((r) => r.id !== id));
+  // When selected product changes in autocomplete
+  const handleProductSelect = (_event: any, newValue: PriceListItem | null) => {
+    setSelectedProductOption(newValue);
+    updateEntryFormPrices(newValue);
   };
 
-  // Bill Financial Totals Calculation
-  const subtotal = useMemo(() => {
-    return productRows.reduce((acc, row) => acc + (parseFloat(row.amount) || 0), 0);
-  }, [productRows]);
+  // Safe Mode Switch Request Handler
+  const handleRequestModeSwitch = (targetMode: BillingMode, targetCustomPct?: number) => {
+    const nextCustomPct = targetCustomPct !== undefined ? targetCustomPct : customDiscountPercent;
 
-  const discountAmount = useMemo(() => {
-    const rawDisc = parseFloat(discount) || 0;
-    if (rawDisc <= 0) return 0;
-    if (rawDisc <= 100) {
-      return (subtotal * rawDisc) / 100;
+    if (cartItems.length > 0) {
+      // Prompt confirmation before modifying existing cart
+      setPendingModeSwitch({ targetMode, targetCustomPercent: nextCustomPct });
+      setModeConfirmDialogOpen(true);
+    } else {
+      // Instant switch if cart is empty
+      setPricingMode(targetMode);
+      if (targetCustomPct !== undefined) setCustomDiscountPercent(targetCustomPct);
+      fetchProductsForMode(targetMode);
+      setSelectedProductOption(null);
+      setEntryMrpRate('0');
+      setEntryNetRate('0');
+      setEntryDiscountPercent(targetMode === '90_PERCENT' ? '90' : nextCustomPct.toString());
     }
-    return rawDisc;
-  }, [subtotal, discount]);
+  };
 
-  const totalCases = useMemo(() => {
-    return productRows.reduce((acc, row) => acc + (parseFloat(row.quantity) || 0), 0);
-  }, [productRows]);
+  const handleConfirmModeSwitch = async () => {
+    if (!pendingModeSwitch) return;
+    const { targetMode, targetCustomPercent } = pendingModeSwitch;
+    const nextCustomPct = targetCustomPercent !== undefined ? targetCustomPercent : customDiscountPercent;
 
-  const grandTotal = useMemo(() => {
-    const transportAmt = parseFloat(transport) || 0;
-    const packingAmt = parseFloat(packing) || 0;
-    const isTaxEnabled = Boolean(storeSettings.enableTax);
-    const taxPercent = isTaxEnabled ? (parseFloat(tax) || 0) : 0;
-
-    const afterDiscount = Math.max(0, subtotal - discountAmount);
-    const withAdditions = afterDiscount + transportAmt + packingAmt;
-    const taxAmt = taxPercent > 0 ? (withAdditions * taxPercent) / 100 : 0;
-    return withAdditions + taxAmt;
-  }, [subtotal, discountAmount, transport, packing, tax, storeSettings.enableTax]);
-
-  // Save Bill to DB
-  const handleSaveBill = async (andPrint: boolean = false) => {
-    if (!customerName.trim()) {
-      alert('Please select or enter Customer Name');
-      return;
-    }
-    if (productRows.length === 0) {
-      alert('Please add at least one product item to the bill');
-      return;
-    }
+    setPricingMode(targetMode);
+    if (targetCustomPercent !== undefined) setCustomDiscountPercent(targetCustomPercent);
 
     try {
-      setSavingBill(true);
-      const isTaxEnabled = Boolean(storeSettings.enableTax);
+      // Load target price list products
+      const targetProducts = await PriceListsApi.getBillingProducts(targetMode as PriceListType);
+      setBillingProducts(targetProducts || []);
+
+      // Recalculate all cart rows preserving quantities against target price list
+      const updatedCart: CartItem[] = cartItems.map((item) => {
+        const qty = parseFloat(item.quantity) || 1;
+        const targetItem = (targetProducts || []).find(
+          (p) =>
+            (item.sku && p.sku && p.sku.toUpperCase() === item.sku.toUpperCase()) ||
+            ((p.productName || p.itemName || '').toLowerCase() === item.particular.toLowerCase())
+        );
+
+        if (targetItem) {
+          const mrp = Number(targetItem.rate || 0);
+          const discPct = Number(targetItem.discountPercentage ?? (targetMode === '90_PERCENT' ? 90 : nextCustomPct));
+          const discAmt = Number(targetItem.discountAmount ?? ((mrp * discPct) / 100));
+          const netRate = Number(targetItem.netRate ?? Math.max(0, mrp - discAmt));
+          const lineTotal = Math.round(netRate * qty * 100) / 100;
+
+          return {
+            ...item,
+            productId: String(targetItem._id || targetItem.id),
+            sku: targetItem.sku || item.sku,
+            particular: targetItem.productName || targetItem.itemName || item.particular,
+            rate: mrp.toString(),
+            discountPercentage: discPct.toString(),
+            discountAmount: discAmt.toFixed(2),
+            netRate: netRate.toFixed(2),
+            amount: lineTotal.toFixed(2),
+            pktUnit: targetItem.unit || item.pktUnit || 'Box',
+            availableStock: targetItem.stock,
+          };
+        } else {
+          // Product does not exist in target list -> calculate using fallback mode %
+          const mrp = parseFloat(item.rate) || 0;
+          const discPct = targetMode === '90_PERCENT' ? 90 : nextCustomPct;
+          const discAmt = (mrp * discPct) / 100;
+          const net = Math.max(0, Math.round((mrp - discAmt) * 100) / 100);
+          const lineTotal = Math.round(net * qty * 100) / 100;
+
+          return {
+            ...item,
+            discountPercentage: discPct.toString(),
+            discountAmount: discAmt.toFixed(2),
+            netRate: net.toFixed(2),
+            amount: lineTotal.toFixed(2),
+          };
+        }
+      });
+
+      setCartItems(updatedCart);
+      setSelectedProductOption(null);
+      setEntryMrpRate('0');
+      setEntryNetRate('0');
+      setEntryDiscountPercent(targetMode === '90_PERCENT' ? '90' : nextCustomPct.toString());
+
+      setToast({
+        open: true,
+        message: `Switched pricing mode to ${targetMode === '90_PERCENT' ? '90% DISCOUNT PRICE LIST' : `CUSTOM DISCOUNT PRICE LIST (${nextCustomPct}%)`}. Bill recalculated!`,
+        severity: 'info',
+      });
+    } catch (err: any) {
+      console.error('Error switching pricing mode', err);
+      setToast({ open: true, message: 'Failed to recalculate bill with target price list', severity: 'error' });
+    } finally {
+      setModeConfirmDialogOpen(false);
+      setPendingModeSwitch(null);
+    }
+  };
+
+  const handleCancelModeSwitch = () => {
+    setModeConfirmDialogOpen(false);
+    setPendingModeSwitch(null);
+  };
+
+  // Custom Discount Dropdown Change Handler
+  const handleCustomDiscountDropdownChange = (newPct: number) => {
+    if (cartItems.length > 0) {
+      setPendingModeSwitch({ targetMode: 'CUSTOM', targetCustomPercent: newPct });
+      setModeConfirmDialogOpen(true);
+    } else {
+      setCustomDiscountPercent(newPct);
+      setEntryDiscountPercent(newPct.toString());
+      if (selectedProductOption) {
+        updateEntryFormPrices(selectedProductOption);
+      }
+    }
+  };
+
+  // Add Product to Cart
+  const handleAddToCart = () => {
+    if (!selectedProductOption) {
+      setToast({ open: true, message: 'Please select a cracker product to add.', severity: 'warning' });
+      return;
+    }
+
+    const qtyNum = parseFloat(entryQty) || 1;
+    if (qtyNum <= 0) {
+      setToast({ open: true, message: 'Quantity must be at least 1.', severity: 'error' });
+      return;
+    }
+
+    const mrpNum = parseFloat(entryMrpRate) || Number(selectedProductOption.rate || 0);
+    const discPct = parseFloat(entryDiscountPercent) || Number(selectedProductOption.discountPercentage ?? (pricingMode === '90_PERCENT' ? 90 : customDiscountPercent));
+    const discAmt = (mrpNum * discPct) / 100;
+    const netRateNum = parseFloat(entryNetRate) || Number(selectedProductOption.netRate ?? Math.max(0, mrpNum - discAmt));
+    const lineTotal = Math.round(netRateNum * qtyNum * 100) / 100;
+
+    // Check if item already exists in cart -> increment quantity
+    const existingIndex = cartItems.findIndex(
+      (item) =>
+        (item.productId && (item.productId === selectedProductOption._id || item.productId === selectedProductOption.id)) ||
+        (item.sku && selectedProductOption.sku && item.sku.toUpperCase() === selectedProductOption.sku.toUpperCase()) ||
+        item.particular.toLowerCase() === (selectedProductOption.productName || selectedProductOption.itemName || '').toLowerCase()
+    );
+
+    if (existingIndex > -1) {
+      const updated = [...cartItems];
+      const currentQty = parseFloat(updated[existingIndex].quantity) || 0;
+      const newTotalQty = currentQty + qtyNum;
+      const updatedTotal = Math.round(netRateNum * newTotalQty * 100) / 100;
+
+      updated[existingIndex] = {
+        ...updated[existingIndex],
+        quantity: newTotalQty.toString(),
+        amount: updatedTotal.toFixed(2),
+      };
+      setCartItems(updated);
+    } else {
+      const newItem: CartItem = {
+        id: `row_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        productId: String(selectedProductOption._id || selectedProductOption.id),
+        sku: selectedProductOption.sku || `CK-${String(cartItems.length + 1).padStart(3, '0')}`,
+        particular: selectedProductOption.productName || selectedProductOption.itemName || 'Cracker Item',
+        category: selectedProductOption.category || 'General',
+        quantity: qtyNum.toString(),
+        rate: mrpNum.toString(),
+        discountPercentage: discPct.toString(),
+        discountAmount: discAmt.toFixed(2),
+        netRate: netRateNum.toFixed(2),
+        pktUnit: entryUnit || selectedProductOption.unit || 'Box',
+        amount: lineTotal.toFixed(2),
+        availableStock: selectedProductOption.stock,
+      };
+      setCartItems((prev) => [...prev, newItem]);
+    }
+
+    // Reset Entry input
+    setSelectedProductOption(null);
+    setEntryQty('1');
+    setEntryMrpRate('0');
+    setEntryNetRate('0');
+  };
+
+  const handleCartQtyChange = (index: number, newQty: string) => {
+    const updated = [...cartItems];
+    const qtyNum = parseFloat(newQty) || 0;
+    const netRateNum = parseFloat(updated[index].netRate) || 0;
+    const lineTotal = Math.round(netRateNum * qtyNum * 100) / 100;
+
+    updated[index] = {
+      ...updated[index],
+      quantity: newQty,
+      amount: lineTotal.toFixed(2),
+    };
+    setCartItems(updated);
+  };
+
+  const handleRemoveCartItem = (index: number) => {
+    setCartItems((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleClearCart = () => {
+    if (cartItems.length > 0 && !window.confirm('Are you sure you want to clear all items in this bill?')) {
+      return;
+    }
+    setCartItems([]);
+  };
+
+  // Cart Calculations
+  const calculations = useMemo(() => {
+    let subtotalMrp = 0;
+    let totalDiscountAmount = 0;
+    let netSubtotal = 0;
+    let totalCases = 0;
+
+    cartItems.forEach((item) => {
+      const qty = parseFloat(item.quantity) || 0;
+      const mrp = parseFloat(item.rate) || 0;
+      const discAmt = parseFloat(item.discountAmount) || 0;
+      const netRate = parseFloat(item.netRate) || 0;
+
+      subtotalMrp += mrp * qty;
+      totalDiscountAmount += discAmt * qty;
+      netSubtotal += netRate * qty;
+      totalCases += qty;
+    });
+
+    const discNum = parseFloat(discount.replace(/[^0-9.]/g, '')) || 0;
+    const transNum = parseFloat(transport.replace(/[^0-9.]/g, '')) || 0;
+    const packNum = parseFloat(packing.replace(/[^0-9.]/g, '')) || 0;
+    const taxNum = parseFloat(tax.replace(/[^0-9.]/g, '')) || 0;
+
+    let billLevelDiscount = 0;
+    if (discNum > 0) {
+      billLevelDiscount = discount.includes('%') ? (netSubtotal * discNum) / 100 : discNum;
+    }
+
+    const baseForTax = Math.max(0, netSubtotal - billLevelDiscount + transNum + packNum);
+    const taxAmount = taxNum > 0 ? (baseForTax * taxNum) / 100 : 0;
+    const grandTotal = Math.max(0, netSubtotal - billLevelDiscount + transNum + packNum + taxAmount);
+
+    return {
+      subtotalMrp: Math.round(subtotalMrp * 100) / 100,
+      totalDiscountAmount: Math.round(totalDiscountAmount * 100) / 100,
+      netSubtotal: Math.round(netSubtotal * 100) / 100,
+      billLevelDiscount: Math.round(billLevelDiscount * 100) / 100,
+      taxAmount: Math.round(taxAmount * 100) / 100,
+      grandTotal: Math.round(grandTotal * 100) / 100,
+      totalCases,
+    };
+  }, [cartItems, discount, transport, packing, tax]);
+
+  // Customer Autocomplete selection
+  const handleCustomerSelect = (_event: any, newValue: any) => {
+    if (typeof newValue === 'string') {
+      setCustomerName(newValue);
+    } else if (newValue && newValue.name) {
+      setCustomerName(newValue.name);
+      if (newValue.phone) setCustomerPhone(newValue.phone);
+      if (newValue.address) setCustomerAddress(newValue.address);
+      if (newValue.gst) setCustomerGst(newValue.gst);
+    } else {
+      setCustomerName('');
+    }
+  };
+
+  // Save Bill to Backend
+  const handleSaveBill = async (autoPrint: boolean = false) => {
+    if (!customerName.trim()) {
+      setToast({ open: true, message: 'Please enter a customer name.', severity: 'error' });
+      return;
+    }
+
+    if (cartItems.length === 0) {
+      setToast({ open: true, message: 'Please add at least one product to the bill.', severity: 'error' });
+      return;
+    }
+
+    setSavingBill(true);
+
+    try {
       const payload = {
-        billNo: billNo.trim() || `INV-${Date.now().toString().slice(-4)}`,
-        date: billDate,
         customerName: customerName.trim(),
-        companyName: company || storeSettings.companyName || 'General',
-        transport: transport || '0',
-        caseCount: String(totalCases),
-        discount: discount || '0',
-        packing: packing || '0',
-        tax: isTaxEnabled ? (tax || '0') : '0',
-        amount: String(subtotal.toFixed(2)),
-        total: String(grandTotal.toFixed(2)),
-        products: productRows.map((r) => ({
-          particular: r.particular,
-          quantity: r.quantity,
-          rate: r.rate,
-          pktUnit: r.pktUnit,
-          amount: r.amount,
+        customerPhone: customerPhone.trim(),
+        customerAddress: customerAddress.trim(),
+        customerGst: customerGst.trim(),
+        caseCount: calculations.totalCases.toString(),
+        companyName: company || storeSettings.companyName || 'Balaji Crackers & Fireworks',
+        pricingMode,
+        customDiscountPercent: pricingMode === 'CUSTOM' ? customDiscountPercent : undefined,
+        discount,
+        transport,
+        packing,
+        tax,
+        billNo: billNo || undefined,
+        amount: calculations.netSubtotal.toFixed(2),
+        total: calculations.grandTotal.toFixed(2),
+        paymentStatus,
+        paymentMode,
+        paidAmount: paidAmount || (paymentStatus === 'PAID' ? calculations.grandTotal.toFixed(2) : '0.00'),
+        date: billDate,
+        products: cartItems.map((item) => ({
+          productId: item.productId,
+          sku: item.sku,
+          particular: item.particular,
+          category: item.category,
+          quantity: item.quantity,
+          rate: item.rate,
+          discountPercentage: item.discountPercentage,
+          discountAmount: item.discountAmount,
+          netRate: item.netRate,
+          pktUnit: item.pktUnit,
+          amount: item.amount,
         })),
       };
 
-      await ParticularsApi.create(payload);
+      const savedBill = await ParticularsApi.create(payload);
 
-      if (andPrint) {
-        const printData: BillPrintData = {
-          billNo: payload.billNo,
-          date: payload.date,
-          customerName: payload.customerName,
-          companyName: payload.companyName,
-          transport: payload.transport,
-          caseCount: payload.caseCount,
-          discount: payload.discount,
-          packing: payload.packing,
-          tax: payload.tax,
-          amount: payload.amount,
-          total: payload.total,
-          products: payload.products,
-        };
-        setSelectedBillForPrint(printData);
+      setToast({
+        open: true,
+        message: `Bill #${savedBill.billNo} saved successfully in ${pricingMode === '90_PERCENT' ? '90% DISCOUNT' : 'CUSTOM DISCOUNT'} mode!`,
+        severity: 'success',
+      });
+
+      // Prepare print data
+      const printData: BillPrintData = {
+        billNo: savedBill.billNo,
+        date: savedBill.date,
+        customerName: savedBill.customerName,
+        customerPhone: savedBill.customerPhone,
+        customerAddress: savedBill.customerAddress,
+        customerGst: savedBill.customerGst,
+        companyName: savedBill.companyName,
+        caseCount: savedBill.caseCount,
+        products: (savedBill.products || []).map((p: any) => ({
+          particular: p.particular,
+          quantity: p.quantity,
+          rate: p.rate,
+          pktUnit: p.pktUnit,
+          amount: p.amount,
+        })),
+        amount: savedBill.amount,
+        discount: savedBill.discount,
+        transport: savedBill.transport,
+        packing: savedBill.packing,
+        tax: savedBill.tax,
+        total: savedBill.total,
+        paymentStatus: savedBill.paymentStatus,
+        paymentMode: savedBill.paymentMode,
+        paidAmount: savedBill.paidAmount,
+      };
+
+      setBillToPrint(printData);
+
+      if (autoPrint) {
         setPrintModalOpen(true);
       }
 
-      // Reset Bill Form & Reload Recent Bills
-      setProductRows([]);
-      setCustomerName('');
-      setDiscount('0');
-      setTransport('0');
-      setPacking('0');
-      setTax(storeSettings.enableTax ? (storeSettings.defaultTaxRate || '0') : '0');
-      localStorage.removeItem(DRAFT_BILL_STORAGE_KEY);
-      localStorage.removeItem('dheeksha_active_customer');
-      fetchNextBillNo();
-      refreshDate();
-
-      if (!andPrint) {
-        alert(`Bill #${payload.billNo} saved successfully!`);
-      }
+      // Reset for next bill
+      setCartItems([]);
+      setSelectedProductOption(null);
+      fetchData(); // Fetch next bill no
     } catch (err: any) {
-      console.error('Failed to save bill:', err);
-      alert(err.message || 'Error saving bill');
+      setToast({ open: true, message: err.message || 'Failed to save bill', severity: 'error' });
     } finally {
       setSavingBill(false);
     }
   };
 
-  // Clear Draft Bill Form
-  const handleClearDraft = () => {
-    if (productRows.length > 0 || customerName.trim() !== '') {
-      if (!window.confirm('Are you sure you want to clear this draft bill?')) return;
+  const handleManualPrintPreview = () => {
+    if (cartItems.length === 0) {
+      setToast({ open: true, message: 'Please add products before printing preview.', severity: 'warning' });
+      return;
     }
-    setProductRows([]);
-    setCustomerName('');
-    setDiscount('0');
-    setTransport('0');
-    setPacking('0');
-    setTax(storeSettings.enableTax ? (storeSettings.defaultTaxRate || '0') : '0');
-    localStorage.removeItem(DRAFT_BILL_STORAGE_KEY);
-    localStorage.removeItem('dheeksha_active_customer');
-    fetchNextBillNo();
-    refreshDate();
+
+    const previewData: BillPrintData = {
+      billNo: billNo || 'PREVIEW',
+      date: billDate,
+      customerName: customerName || 'General Cash Sale',
+      customerPhone,
+      customerAddress,
+      customerGst,
+      companyName: company || storeSettings.companyName || 'Balaji Crackers & Fireworks',
+      caseCount: calculations.totalCases,
+      products: cartItems.map((p) => ({
+        particular: p.particular,
+        quantity: p.quantity,
+        rate: p.netRate,
+        pktUnit: p.pktUnit,
+        amount: p.amount,
+      })),
+      amount: calculations.netSubtotal,
+      discount,
+      transport,
+      packing,
+      tax,
+      total: calculations.grandTotal,
+      paymentStatus,
+      paymentMode,
+      paidAmount: paidAmount || (paymentStatus === 'PAID' ? calculations.grandTotal : 0),
+    };
+
+    setBillToPrint(previewData);
+    setPrintModalOpen(true);
   };
 
   return (
-    <Box
-      sx={{
-        width: '100%',
-        px: { xs: 2, sm: 3, md: 4 },
-        py: { xs: 2, md: 3 },
-        boxSizing: 'border-box',
-      }}
-    >
-      {/* Top Banner Header */}
-      <Box
+    <Box sx={{ p: { xs: 1.5, md: 3 }, maxWidth: 1400, margin: '0 auto' }}>
+      {/* TOP HERO: PRICING MODE SELECTOR & BILLING HEADER */}
+      <Paper
+        elevation={0}
         sx={{
-          mb: 3,
-          display: 'flex',
-          flexDirection: { xs: 'column', sm: 'row' },
-          alignItems: { xs: 'flex-start', sm: 'center' },
-          justifyContent: 'space-between',
-          gap: 1.5,
+          p: { xs: 2, md: 2.5 },
+          mb: 2.5,
+          borderRadius: '16px',
+          border: '2px solid',
+          borderColor: pricingMode === '90_PERCENT' ? '#FCA5A5' : '#93C5FD',
+          background: pricingMode === '90_PERCENT'
+            ? 'linear-gradient(135deg, #FFF1F2 0%, #FFFFFF 100%)'
+            : 'linear-gradient(135deg, #EFF6FF 0%, #FFFFFF 100%)',
+          boxShadow: '0 6px 24px rgba(0,0,0,0.06)',
         }}
       >
-        <Box>
-          <Typography sx={{ fontSize: '24px', fontWeight: 800, color: '#B91C1C', letterSpacing: '-0.02em' }}>
-            New Invoice & Billing
-          </Typography>
-          <Typography sx={{ fontSize: '13px', color: '#786C58', fontWeight: 500 }}>
-            Create and print customer bills instantly with auto-populated price list rates.
-          </Typography>
-        </Box>
+        <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, justifyContent: 'space-between', alignItems: { xs: 'flex-start', md: 'center' }, gap: 2 }}>
+          {/* Billing Title & Active Mode Status */}
+          <Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <ReceiptLongRoundedIcon sx={{ fontSize: 32, color: pricingMode === '90_PERCENT' ? '#DC2626' : '#2563EB' }} />
+              <div>
+                <Typography variant="h5" sx={{ fontWeight: 900, color: '#0F172A', letterSpacing: '-0.02em', lineHeight: 1.2 }}>
+                  CRACKERS BILLING DESK
+                </Typography>
+                <Typography variant="body2" sx={{ color: '#475569', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1, mt: 0.3 }}>
+                  <span>Current Pricing:</span>
+                  <strong style={{ color: pricingMode === '90_PERCENT' ? '#DC2626' : '#2563EB', fontSize: '14px' }}>
+                    {pricingMode === '90_PERCENT'
+                      ? '90% DISCOUNT (Standard Net Rate)'
+                      : `CUSTOM DISCOUNT (${customDiscountPercent}% APPLIED)`}
+                  </strong>
+                </Typography>
+              </div>
+            </Box>
+          </Box>
 
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          {productRows.length > 0 && (
-            <Chip
-              label={`Draft Auto-Saved (${productRows.length} items)`}
-              size="small"
-              sx={{ backgroundColor: '#FEF3C7', color: '#B45309', fontWeight: 800, border: '1px solid #FCD34D' }}
+          {/* Pricing Mode Toggle Buttons */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+            <Box
+              sx={{
+                display: 'flex',
+                p: 0.6,
+                borderRadius: '14px',
+                backgroundColor: '#FFFFFF',
+                border: '2px solid #CBD5E1',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+                gap: 1,
+              }}
+            >
+              {/* 90% DISCOUNT BUTTON */}
+              <Button
+                onClick={() => handleRequestModeSwitch('90_PERCENT')}
+                sx={{
+                  px: 3,
+                  py: 1.2,
+                  borderRadius: '10px',
+                  fontWeight: 900,
+                  fontSize: '14px',
+                  textTransform: 'none',
+                  letterSpacing: '0.02em',
+                  backgroundColor: pricingMode === '90_PERCENT' ? '#DC2626' : '#F8FAFC',
+                  color: pricingMode === '90_PERCENT' ? '#FFFFFF' : '#64748B',
+                  boxShadow: pricingMode === '90_PERCENT' ? '0 4px 14px rgba(220, 38, 38, 0.4)' : 'none',
+                  transition: 'all 0.2s ease',
+                  '&:hover': {
+                    backgroundColor: pricingMode === '90_PERCENT' ? '#B91C1C' : '#F1F5F9',
+                  },
+                }}
+              >
+                {pricingMode === '90_PERCENT' && '🟢 '}90% DISCOUNT
+              </Button>
+
+              {/* CUSTOM DISCOUNT BUTTON */}
+              <Button
+                onClick={() => handleRequestModeSwitch('CUSTOM')}
+                sx={{
+                  px: 3,
+                  py: 1.2,
+                  borderRadius: '10px',
+                  fontWeight: 900,
+                  fontSize: '14px',
+                  textTransform: 'none',
+                  letterSpacing: '0.02em',
+                  backgroundColor: pricingMode === 'CUSTOM' ? '#2563EB' : '#F8FAFC',
+                  color: pricingMode === 'CUSTOM' ? '#FFFFFF' : '#64748B',
+                  boxShadow: pricingMode === 'CUSTOM' ? '0 4px 14px rgba(37, 99, 235, 0.4)' : 'none',
+                  transition: 'all 0.2s ease',
+                  '&:hover': {
+                    backgroundColor: pricingMode === 'CUSTOM' ? '#1D4ED8' : '#F1F5F9',
+                  },
+                }}
+              >
+                {pricingMode === 'CUSTOM' && '🟡 '}CUSTOM DISCOUNT
+              </Button>
+            </Box>
+
+            {/* Custom Discount Percentage Selector Dropdown (When CUSTOM is active) */}
+            {pricingMode === 'CUSTOM' && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <FormControl size="small" sx={{ minWidth: 140 }}>
+                  <InputLabel id="custom-disc-label" sx={{ fontWeight: 700, color: '#1E40AF' }}>
+                    Discount %
+                  </InputLabel>
+                  <Select
+                    labelId="custom-disc-label"
+                    label="Discount %"
+                    value={customDiscountPercent}
+                    onChange={(e) => handleCustomDiscountDropdownChange(Number(e.target.value))}
+                    sx={{
+                      borderRadius: '10px',
+                      fontWeight: 900,
+                      fontSize: '14px',
+                      backgroundColor: '#FFFFFF',
+                      color: '#1E40AF',
+                      border: '1.5px solid #93C5FD',
+                    }}
+                  >
+                    {availableCustomDiscounts.map((disc) => (
+                      <MenuItem key={disc.percentage} value={disc.percentage} sx={{ fontWeight: 700 }}>
+                        {disc.percentage}% Discount
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Box>
+            )}
+          </Box>
+        </Box>
+      </Paper>
+
+      {/* SECTION 1: CUSTOMER & BILL DETAILS */}
+      <Paper
+        elevation={0}
+        sx={{
+          p: 2.5,
+          mb: 2.5,
+          borderRadius: '14px',
+          border: '1.5px solid #E2E8F0',
+          backgroundColor: '#FFFFFF',
+        }}
+      >
+        <Grid container spacing={2}>
+          {/* Customer Name Autocomplete */}
+          <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+            <Autocomplete
+              freeSolo
+              options={customerOptions}
+              getOptionLabel={(option) => (typeof option === 'string' ? option : option.name)}
+              value={customerName}
+              onInputChange={(_e, newInputValue) => setCustomerName(newInputValue)}
+              onChange={handleCustomerSelect}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Customer / Party Name"
+                  placeholder="Type or select customer..."
+                  size="small"
+                  required
+                />
+              )}
             />
+          </Grid>
+
+          {/* Mobile Number */}
+          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+            <TextField
+              label="Mobile Number"
+              placeholder="+91 98765 43210"
+              size="small"
+              fullWidth
+              value={customerPhone}
+              onChange={(e) => setCustomerPhone(e.target.value)}
+            />
+          </Grid>
+
+          {/* Bill Number */}
+          <Grid size={{ xs: 6, sm: 6, md: 2.5 }}>
+            <TextField
+              label="Bill Number"
+              size="small"
+              fullWidth
+              value={billNo}
+              onChange={(e) => setBillNo(e.target.value)}
+              sx={{ backgroundColor: '#FEF3C7', borderRadius: '4px' }}
+            />
+          </Grid>
+
+          {/* Bill Date */}
+          <Grid size={{ xs: 6, sm: 6, md: 2.5 }}>
+            <TextField
+              label="Bill Date"
+              size="small"
+              fullWidth
+              value={billDate}
+              onChange={(e) => setBillDate(e.target.value)}
+            />
+          </Grid>
+
+          {/* Company Selection */}
+          <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+            <FormControl size="small" fullWidth>
+              <InputLabel id="bill-company-label">Billed From (Company)</InputLabel>
+              <Select
+                labelId="bill-company-label"
+                label="Billed From (Company)"
+                value={company}
+                onChange={(e) => setCompany(e.target.value)}
+              >
+                {companyOptions.map((co) => (
+                  <MenuItem key={co.id} value={co.name}>
+                    {co.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+
+          {/* Customer Address & GST */}
+          <Grid size={{ xs: 12, sm: 6, md: 5 }}>
+            <TextField
+              label="Customer Address / Destination"
+              placeholder="e.g. 45, Gandhi Road, Salem, Tamil Nadu"
+              size="small"
+              fullWidth
+              value={customerAddress}
+              onChange={(e) => setCustomerAddress(e.target.value)}
+            />
+          </Grid>
+
+          <Grid size={{ xs: 12, sm: 12, md: 3 }}>
+            <TextField
+              label="Customer GSTIN (Optional)"
+              placeholder="e.g. 33AABCS1111A1Z1"
+              size="small"
+              fullWidth
+              value={customerGst}
+              onChange={(e) => setCustomerGst(e.target.value)}
+            />
+          </Grid>
+        </Grid>
+      </Paper>
+
+      {/* SECTION 2: PRODUCT SEARCH & ADD TO BILL */}
+      <Paper
+        elevation={0}
+        sx={{
+          p: 2.5,
+          mb: 2.5,
+          borderRadius: '14px',
+          border: '1.5px solid #E2E8F0',
+          backgroundColor: '#FFFFFF',
+        }}
+      >
+        <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#334155', mb: 1.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+          <ShoppingCartRoundedIcon sx={{ fontSize: 18, color: pricingMode === '90_PERCENT' ? '#DC2626' : '#2563EB' }} />
+          Product Quick Search & Add ({pricingMode === '90_PERCENT' ? '90% Net Rate Mode' : `Custom ${customDiscountPercent}% Mode`})
+        </Typography>
+
+        <Grid container spacing={2} sx={{ alignItems: 'center' }}>
+          {/* Product Autocomplete */}
+          <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+            <Autocomplete
+              options={billingProducts}
+              getOptionLabel={(p) =>
+                `${p.sku ? `[${p.sku}] ` : ''}${p.productName || p.itemName} - MRP ₹${Number(p.rate || 0).toFixed(2)} | Net ₹${Number(p.netRate || 0).toFixed(2)}`
+              }
+              value={selectedProductOption}
+              onChange={handleProductSelect}
+              loading={loadingProducts}
+              renderOption={(props, option) => {
+                const mrp = Number(option.rate || 0);
+                const disc = Number(option.discountPercentage ?? (pricingMode === '90_PERCENT' ? 90 : customDiscountPercent));
+                const net = Number(option.netRate ?? Math.max(0, mrp * (1 - disc / 100)));
+
+                return (
+                  <li {...props} key={option._id || option.id || option.sku}>
+                    <Box sx={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 0.5 }}>
+                      <Box>
+                        <Typography sx={{ fontWeight: 700, fontSize: '13.5px', color: '#0F172A' }}>
+                          <span style={{ color: '#64748B', fontSize: '12px', marginRight: '6px' }}>[{option.sku}]</span>
+                          {option.productName || option.itemName}
+                        </Typography>
+                        <Typography sx={{ fontSize: '11.5px', color: '#64748B' }}>
+                          Category: {option.category || 'General'} | Stock: {option.stock ?? 100} {option.unit || 'Box'}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ textAlign: 'right' }}>
+                        <Typography sx={{ fontSize: '12px', color: '#94A3B8', textDecoration: 'line-through' }}>
+                          MRP: ₹{mrp.toFixed(2)}
+                        </Typography>
+                        <Typography sx={{ fontSize: '13.5px', fontWeight: 800, color: pricingMode === '90_PERCENT' ? '#DC2626' : '#2563EB' }}>
+                          Net: ₹{net.toFixed(2)} ({disc}% Off)
+                        </Typography>
+                      </Box>
+                    </Box>
+                  </li>
+                );
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label={`Search ${pricingMode === '90_PERCENT' ? '90%' : 'Custom'} Cracker Product / SKU`}
+                  placeholder="Type product name or SKU..."
+                  size="small"
+                  autoFocus
+                />
+              )}
+            />
+          </Grid>
+
+          {/* Quantity */}
+          <Grid size={{ xs: 6, sm: 3, md: 1.5 }}>
+            <TextField
+              label="Quantity"
+              type="number"
+              size="small"
+              fullWidth
+              value={entryQty}
+              onChange={(e) => setEntryQty(e.target.value)}
+              onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
+                if (e.key === 'Enter') handleAddToCart();
+              }}
+            />
+          </Grid>
+
+          {/* MRP Rate */}
+          <Grid size={{ xs: 6, sm: 3, md: 1.5 }}>
+            <TextField
+              label="Rate (MRP)"
+              size="small"
+              fullWidth
+              disabled
+              value={`₹${entryMrpRate}`}
+              sx={{ backgroundColor: '#F8FAFC' }}
+            />
+          </Grid>
+
+          {/* Discount % */}
+          <Grid size={{ xs: 6, sm: 3, md: 1.5 }}>
+            <TextField
+              label="Disc %"
+              size="small"
+              fullWidth
+              disabled
+              value={`${entryDiscountPercent}%`}
+              sx={{ backgroundColor: '#F8FAFC' }}
+            />
+          </Grid>
+
+          {/* Net Rate */}
+          <Grid size={{ xs: 6, sm: 3, md: 1.5 }}>
+            <TextField
+              label="Net Rate"
+              size="small"
+              fullWidth
+              disabled
+              value={`₹${entryNetRate}`}
+              sx={{ backgroundColor: pricingMode === '90_PERCENT' ? '#FEE2E2' : '#DBEAFE', borderRadius: '4px' }}
+            />
+          </Grid>
+
+          {/* Add Button */}
+          <Grid size={{ xs: 12, sm: 6, md: 2 }}>
+            <Button
+              variant="contained"
+              fullWidth
+              startIcon={<AddRoundedIcon />}
+              onClick={handleAddToCart}
+              sx={{
+                py: 1,
+                borderRadius: '10px',
+                fontWeight: 800,
+                fontSize: '13.5px',
+                textTransform: 'none',
+                backgroundColor: pricingMode === '90_PERCENT' ? '#DC2626' : '#2563EB',
+                '&:hover': {
+                  backgroundColor: pricingMode === '90_PERCENT' ? '#B91C1C' : '#1D4ED8',
+                },
+              }}
+            >
+              Add to Bill
+            </Button>
+          </Grid>
+        </Grid>
+      </Paper>
+
+      {/* SECTION 3: BILL CART TABLE */}
+      <Paper
+        elevation={0}
+        sx={{
+          borderRadius: '14px',
+          border: '1.5px solid #E2E8F0',
+          overflow: 'hidden',
+          backgroundColor: '#FFFFFF',
+          mb: 2.5,
+        }}
+      >
+        <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1.5px solid #E2E8F0', backgroundColor: '#F8FAFC' }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 800, color: '#1E293B' }}>
+            Bill Line Items ({cartItems.length} Products, {calculations.totalCases} Total Cases)
+          </Typography>
+          {cartItems.length > 0 && (
+            <Button
+              size="small"
+              variant="text"
+              startIcon={<ClearRoundedIcon />}
+              onClick={handleClearCart}
+              sx={{ color: '#DC2626', fontWeight: 700, textTransform: 'none' }}
+            >
+              Clear Cart
+            </Button>
           )}
         </Box>
-      </Box>
 
-      {/* Main Two-Column Grid: Create Bill Form + Items Table */}
+        <TableContainer sx={{ maxHeight: 420 }}>
+          <Table size="small" stickyHeader>
+            <TableHead>
+              <TableRow sx={{ backgroundColor: '#F1F5F9' }}>
+                <TableCell sx={{ fontWeight: 800, color: '#334155', width: '50px' }}>S.No</TableCell>
+                <TableCell sx={{ fontWeight: 800, color: '#334155', width: '90px' }}>SKU</TableCell>
+                <TableCell sx={{ fontWeight: 800, color: '#334155' }}>Product / Particulars</TableCell>
+                <TableCell align="center" sx={{ fontWeight: 800, color: '#334155', width: '100px' }}>Quantity</TableCell>
+                <TableCell align="center" sx={{ fontWeight: 800, color: '#334155', width: '80px' }}>Unit</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 800, color: '#334155', width: '110px' }}>MRP Rate</TableCell>
+                <TableCell align="center" sx={{ fontWeight: 800, color: '#334155', width: '90px' }}>Disc %</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 800, color: '#334155', width: '110px' }}>Disc Amt</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 800, color: '#334155', width: '110px', backgroundColor: pricingMode === '90_PERCENT' ? '#FEE2E2' : '#DBEAFE' }}>
+                  Net Rate
+                </TableCell>
+                <TableCell align="right" sx={{ fontWeight: 800, color: '#334155', width: '130px' }}>Total Amount</TableCell>
+                <TableCell align="center" sx={{ fontWeight: 800, color: '#334155', width: '60px' }}>Action</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {cartItems.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={11} align="center" sx={{ py: 6 }}>
+                    <Typography sx={{ fontSize: '15px', fontWeight: 700, color: '#64748B' }}>
+                      Bill is empty. Use the product search above to add crackers.
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                cartItems.map((item, idx) => {
+                  const qtyNum = parseFloat(item.quantity) || 0;
+                  const stockAlert = item.availableStock !== undefined && item.availableStock < qtyNum;
+
+                  return (
+                    <TableRow key={item.id} hover sx={{ borderBottom: '1px solid #F1F5F9' }}>
+                      <TableCell sx={{ fontWeight: 700, color: '#64748B' }}>{idx + 1}</TableCell>
+                      <TableCell>
+                        <Chip
+                          label={item.sku}
+                          size="small"
+                          sx={{ fontWeight: 800, fontSize: '11px', backgroundColor: '#F1F5F9', color: '#334155' }}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Typography sx={{ fontWeight: 700, fontSize: '13.5px', color: '#0F172A' }}>
+                          {item.particular}
+                        </Typography>
+                        {stockAlert && (
+                          <Typography sx={{ fontSize: '11px', color: '#DC2626', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                            <WarningAmberRoundedIcon sx={{ fontSize: 13 }} />
+                            Stock low: Only {item.availableStock} in inventory
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell align="center">
+                        <TextField
+                          type="number"
+                          size="small"
+                          value={item.quantity}
+                          onChange={(e) => handleCartQtyChange(idx, e.target.value)}
+                          sx={{ width: '80px', '& input': { textAlign: 'center', fontWeight: 700, py: 0.5 } }}
+                        />
+                      </TableCell>
+                      <TableCell align="center" sx={{ color: '#64748B', fontWeight: 600 }}>
+                        {item.pktUnit}
+                      </TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 600, color: '#64748B' }}>
+                        ₹{parseFloat(item.rate).toFixed(2)}
+                      </TableCell>
+                      <TableCell align="center">
+                        <Chip
+                          label={`${item.discountPercentage}%`}
+                          size="small"
+                          sx={{
+                            fontWeight: 800,
+                            fontSize: '11px',
+                            backgroundColor: pricingMode === '90_PERCENT' ? '#DC2626' : '#2563EB',
+                            color: '#FFFFFF',
+                          }}
+                        />
+                      </TableCell>
+                      <TableCell align="right" sx={{ color: '#DC2626', fontWeight: 600 }}>
+                        -₹{parseFloat(item.discountAmount).toFixed(2)}
+                      </TableCell>
+                      <TableCell
+                        align="right"
+                        sx={{
+                          fontWeight: 800,
+                          fontSize: '13.5px',
+                          color: pricingMode === '90_PERCENT' ? '#991B1B' : '#1E40AF',
+                          backgroundColor: pricingMode === '90_PERCENT' ? '#FEF2F2' : '#EFF6FF',
+                        }}
+                      >
+                        ₹{parseFloat(item.netRate).toFixed(2)}
+                      </TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 900, fontSize: '14px', color: '#0F172A' }}>
+                        ₹{parseFloat(item.amount).toFixed(2)}
+                      </TableCell>
+                      <TableCell align="center">
+                        <IconButton size="small" onClick={() => handleRemoveCartItem(idx)} sx={{ color: '#DC2626' }}>
+                          <DeleteOutlineRoundedIcon sx={{ fontSize: 18 }} />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
+
+      {/* SECTION 4: BILLING TOTALS, CHARGES & ACTION CONTROLS */}
       <Grid container spacing={2.5}>
-        {/* Left Column: Customer & Invoice Details */}
-        <Grid size={{ xs: 12, lg: 4 }}>
+        {/* Left: Charges & Payment Controls */}
+        <Grid size={{ xs: 12, md: 7 }}>
           <Paper
             elevation={0}
             sx={{
-              p: { xs: 2, sm: 2.5 },
+              p: 2.5,
               borderRadius: '14px',
-              border: '1.5px solid #FDE68A',
+              border: '1.5px solid #E2E8F0',
               backgroundColor: '#FFFFFF',
-              boxShadow: '0 4px 20px -2px rgba(217, 119, 6, 0.08)',
               height: '100%',
-              boxSizing: 'border-box',
             }}
           >
-            <Typography sx={{ fontSize: '16px', fontWeight: 800, color: '#B91C1C', mb: 2 }}>
-              1. Invoice Information
+            <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#334155', mb: 2 }}>
+              Additional Bill Charges & Payment
             </Typography>
 
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              {/* Customer Selector */}
-              <Box>
-                <Typography sx={{ fontSize: '13px', fontWeight: 700, color: '#786C58', mb: 0.6 }}>
-                  Customer Name *
-                </Typography>
-                <Autocomplete
-                  freeSolo
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 6, sm: 3 }}>
+                <TextField
+                  label="Extra Discount"
                   size="small"
-                  options={customerOptions.map((c) => c.name)}
-                  value={customerName || ''}
-                  onChange={(_, val) => setCustomerName(val || '')}
-                  onInputChange={(_, val) => setCustomerName(val || '')}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      placeholder="Select or enter customer name..."
-                      sx={{
-                        '& .MuiInputBase-input': { fontSize: '13.5px', fontWeight: 600 },
-                      }}
-                    />
-                  )}
+                  fullWidth
+                  value={discount}
+                  onChange={(e) => setDiscount(e.target.value)}
+                  placeholder="0 or 5%"
                 />
-              </Box>
-
-              {/* Bill No & Date (Auto-generated & Non-editable / Read-only) */}
-              <Grid container spacing={1.5}>
-                <Grid size={{ xs: 6 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.6 }}>
-                    <Typography sx={{ fontSize: '13px', fontWeight: 700, color: '#786C58' }}>
-                      Bill / Inv No
-                    </Typography>
-                    <Tooltip title="Auto Generated (Protected)" arrow>
-                      <LockOutlinedIcon sx={{ fontSize: 13, color: '#9CA3AF' }} />
-                    </Tooltip>
-                  </Box>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    value={billNo}
-                    disabled
-                    sx={{
-                      backgroundColor: '#FEF2F2',
-                      borderRadius: '6px',
-                      '& .MuiInputBase-input': {
-                        fontSize: '13.5px',
-                        fontWeight: 800,
-                        color: '#B91C1C !important',
-                        WebkitTextFillColor: '#B91C1C !important',
-                      },
-                      '& .MuiOutlinedInput-notchedOutline': {
-                        borderColor: '#FECACA !important',
-                      },
-                    }}
-                  />
-                </Grid>
-
-                <Grid size={{ xs: 6 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.6 }}>
-                    <Typography sx={{ fontSize: '13px', fontWeight: 700, color: '#786C58' }}>
-                      Bill Date
-                    </Typography>
-                    <Tooltip title="Auto Set to Today" arrow>
-                      <LockOutlinedIcon sx={{ fontSize: 13, color: '#9CA3AF' }} />
-                    </Tooltip>
-                  </Box>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    value={billDate}
-                    disabled
-                    sx={{
-                      backgroundColor: '#F8FAFC',
-                      borderRadius: '6px',
-                      '& .MuiInputBase-input': {
-                        fontSize: '13px',
-                        fontWeight: 700,
-                        color: '#475569 !important',
-                        WebkitTextFillColor: '#475569 !important',
-                      },
-                      '& .MuiOutlinedInput-notchedOutline': {
-                        borderColor: '#E2E8F0 !important',
-                      },
-                    }}
-                  />
-                </Grid>
+              </Grid>
+              <Grid size={{ xs: 6, sm: 3 }}>
+                <TextField
+                  label="Transport (₹)"
+                  size="small"
+                  fullWidth
+                  value={transport}
+                  onChange={(e) => setTransport(e.target.value)}
+                />
+              </Grid>
+              <Grid size={{ xs: 6, sm: 3 }}>
+                <TextField
+                  label="Packing (₹)"
+                  size="small"
+                  fullWidth
+                  value={packing}
+                  onChange={(e) => setPacking(e.target.value)}
+                />
+              </Grid>
+              <Grid size={{ xs: 6, sm: 3 }}>
+                <TextField
+                  label="GST / Tax (%)"
+                  size="small"
+                  fullWidth
+                  value={tax}
+                  onChange={(e) => setTax(e.target.value)}
+                />
               </Grid>
 
-              <Divider sx={{ my: 0.5, borderColor: '#FEF3C7' }} />
-
-              {/* Additional Adjustments: Discount, Transport, Packing, (Tax only if enabled) */}
-              <Typography sx={{ fontSize: '14px', fontWeight: 700, color: '#78350F' }}>
-                Adjustments & Charges
-              </Typography>
-
-              <Grid container spacing={1.5}>
-                <Grid size={{ xs: storeSettings.enableTax ? 6 : 4 }}>
-                  <Typography sx={{ fontSize: '12px', fontWeight: 700, color: '#786C58', mb: 0.4 }}>
-                    Discount (% or ₹)
-                  </Typography>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    value={discount}
-                    onChange={(e) => setDiscount(e.target.value)}
-                    sx={{
-                      '& .MuiInputBase-input': { fontSize: '13px', fontWeight: 600 },
-                    }}
-                  />
-                </Grid>
-
-                <Grid size={{ xs: storeSettings.enableTax ? 6 : 4 }}>
-                  <Typography sx={{ fontSize: '12px', fontWeight: 700, color: '#786C58', mb: 0.4 }}>
-                    Transport (₹)
-                  </Typography>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    value={transport}
-                    onChange={(e) => setTransport(e.target.value)}
-                    sx={{
-                      '& .MuiInputBase-input': { fontSize: '13px', fontWeight: 600 },
-                    }}
-                  />
-                </Grid>
-
-                <Grid size={{ xs: storeSettings.enableTax ? 6 : 4 }}>
-                  <Typography sx={{ fontSize: '12px', fontWeight: 700, color: '#786C58', mb: 0.4 }}>
-                    Packing (₹)
-                  </Typography>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    value={packing}
-                    onChange={(e) => setPacking(e.target.value)}
-                    sx={{
-                      '& .MuiInputBase-input': { fontSize: '13px', fontWeight: 600 },
-                    }}
-                  />
-                </Grid>
-
-                {storeSettings.enableTax && (
-                  <Grid size={{ xs: 6 }}>
-                    <Typography sx={{ fontSize: '12px', fontWeight: 700, color: '#786C58', mb: 0.4 }}>
-                      Tax / GST (%)
-                    </Typography>
-                    <TextField
-                      fullWidth
-                      size="small"
-                      value={tax}
-                      onChange={(e) => setTax(e.target.value)}
-                      placeholder="e.g. 18"
-                      sx={{
-                        '& .MuiInputBase-input': { fontSize: '13px', fontWeight: 600 },
-                      }}
-                    />
-                  </Grid>
-                )}
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <FormControl size="small" fullWidth>
+                  <InputLabel id="payment-mode-label">Payment Mode</InputLabel>
+                  <Select
+                    labelId="payment-mode-label"
+                    label="Payment Mode"
+                    value={paymentMode}
+                    onChange={(e: any) => setPaymentMode(e.target.value)}
+                  >
+                    <MenuItem value="CASH">Cash Payment</MenuItem>
+                    <MenuItem value="UPI">UPI / GPay / PhonePe</MenuItem>
+                    <MenuItem value="BANK">Bank Transfer / NEFT</MenuItem>
+                    <MenuItem value="CREDIT">Credit / Ledger</MenuItem>
+                  </Select>
+                </FormControl>
               </Grid>
 
-              {/* Summary Total Card with Complete Breakdown */}
-              <Box
-                sx={{
-                  p: 2,
-                  borderRadius: '10px',
-                  backgroundColor: '#FFFBEB',
-                  border: '1.5px solid #FDE68A',
-                  mt: 1,
-                }}
-              >
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.6 }}>
-                  <Typography sx={{ fontSize: '13px', color: '#786C58', fontWeight: 600 }}>Subtotal (Items):</Typography>
-                  <Typography sx={{ fontSize: '13px', color: '#1F1714', fontWeight: 700 }}>
-                    ₹{subtotal.toFixed(2)}
-                  </Typography>
-                </Box>
-
-                {discountAmount > 0 && (
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.6 }}>
-                    <Typography sx={{ fontSize: '13px', color: '#059669', fontWeight: 600 }}>Discount:</Typography>
-                    <Typography sx={{ fontSize: '13px', color: '#059669', fontWeight: 700 }}>
-                      -₹{discountAmount.toFixed(2)}
-                    </Typography>
-                  </Box>
-                )}
-
-                {parseFloat(transport) > 0 && (
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.6 }}>
-                    <Typography sx={{ fontSize: '12.5px', color: '#786C58', fontWeight: 600 }}>Transport Charges:</Typography>
-                    <Typography sx={{ fontSize: '12.5px', color: '#1F1714', fontWeight: 700 }}>
-                      +₹{parseFloat(transport).toFixed(2)}
-                    </Typography>
-                  </Box>
-                )}
-
-                {parseFloat(packing) > 0 && (
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.6 }}>
-                    <Typography sx={{ fontSize: '12.5px', color: '#786C58', fontWeight: 600 }}>Packing Charges:</Typography>
-                    <Typography sx={{ fontSize: '12.5px', color: '#1F1714', fontWeight: 700 }}>
-                      +₹{parseFloat(packing).toFixed(2)}
-                    </Typography>
-                  </Box>
-                )}
-
-                {storeSettings.enableTax && parseFloat(tax) > 0 && (
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.6 }}>
-                    <Typography sx={{ fontSize: '12.5px', color: '#786C58', fontWeight: 600 }}>GST / Tax ({tax}%):</Typography>
-                    <Typography sx={{ fontSize: '12.5px', color: '#1F1714', fontWeight: 700 }}>
-                      +₹{(((Math.max(0, subtotal - discountAmount) + parseFloat(transport || '0') + parseFloat(packing || '0')) * parseFloat(tax)) / 100).toFixed(2)}
-                    </Typography>
-                  </Box>
-                )}
-
-                {totalCases > 0 && (
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.6 }}>
-                    <Typography sx={{ fontSize: '12px', color: '#92400E', fontWeight: 600 }}>Total Qty / Cases:</Typography>
-                    <Typography sx={{ fontSize: '12.5px', color: '#92400E', fontWeight: 700 }}>
-                      {totalCases}
-                    </Typography>
-                  </Box>
-                )}
-
-                <Divider sx={{ my: 1, borderColor: '#FDE68A' }} />
-
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Typography sx={{ fontSize: '15px', fontWeight: 800, color: '#991B1B' }}>
-                    Grand Total:
-                  </Typography>
-                  <Typography sx={{ fontSize: '20px', fontWeight: 900, color: '#B91C1C' }}>
-                    ₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </Typography>
-                </Box>
-              </Box>
-
-              {/* Save & Print Action Buttons */}
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 1 }}>
-                <Box sx={{ display: 'flex', gap: 1.5 }}>
-                  <Button
-                    fullWidth
-                    variant="outlined"
-                    onClick={() => handleSaveBill(false)}
-                    disabled={savingBill || productRows.length === 0}
-                    sx={{
-                      borderColor: '#F59E0B',
-                      color: '#92400E',
-                      fontWeight: 700,
-                      textTransform: 'none',
-                      py: 1,
-                      borderRadius: '8px',
-                      '&:hover': { borderColor: '#B45309', backgroundColor: '#FFFBEB' },
-                    }}
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <FormControl size="small" fullWidth>
+                  <InputLabel id="payment-status-label">Payment Status</InputLabel>
+                  <Select
+                    labelId="payment-status-label"
+                    label="Payment Status"
+                    value={paymentStatus}
+                    onChange={(e: any) => setPaymentStatus(e.target.value)}
                   >
-                    Save Bill
-                  </Button>
+                    <MenuItem value="PAID">Full Paid</MenuItem>
+                    <MenuItem value="PARTIAL">Partial Paid</MenuItem>
+                    <MenuItem value="UNPAID">Unpaid / Due</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
 
-                  <Button
-                    fullWidth
-                    variant="contained"
-                    disableElevation
-                    onClick={() => handleSaveBill(true)}
-                    disabled={savingBill || productRows.length === 0}
-                    startIcon={savingBill ? <CircularProgress size={16} color="inherit" /> : <PrintOutlinedIcon />}
-                    sx={{
-                      background: 'linear-gradient(135deg, #DC2626 0%, #B91C1C 100%)',
-                      color: '#FFFFFF',
-                      fontWeight: 800,
-                      textTransform: 'none',
-                      py: 1,
-                      borderRadius: '8px',
-                      boxShadow: '0 2px 8px rgba(220, 38, 38, 0.3)',
-                      '&:hover': { background: 'linear-gradient(135deg, #B91C1C 0%, #991B1B 100%)' },
-                    }}
-                  >
-                    Save & Print
-                  </Button>
-                </Box>
-
-                {(productRows.length > 0 || customerName.trim() !== '') && (
-                  <Button
-                    size="small"
-                    variant="text"
-                    onClick={handleClearDraft}
-                    startIcon={<ClearRoundedIcon sx={{ fontSize: 16 }} />}
-                    sx={{
-                      color: '#991B1B',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      textTransform: 'none',
-                      py: 0.4,
-                      '&:hover': { backgroundColor: '#FEF2F2' },
-                    }}
-                  >
-                    Clear Current Draft Form
-                  </Button>
-                )}
-              </Box>
-            </Box>
+              <Grid size={{ xs: 12, sm: 4 }}>
+                <TextField
+                  label="Amount Received (₹)"
+                  size="small"
+                  fullWidth
+                  value={paidAmount}
+                  placeholder={paymentStatus === 'PAID' ? calculations.grandTotal.toFixed(2) : '0'}
+                  onChange={(e) => setPaidAmount(e.target.value)}
+                />
+              </Grid>
+            </Grid>
           </Paper>
         </Grid>
 
-        {/* Right Column: Product Selector & Current Bill Table */}
-        <Grid size={{ xs: 12, lg: 8 }}>
+        {/* Right: Grand Summary Card & Save Actions */}
+        <Grid size={{ xs: 12, md: 5 }}>
           <Paper
             elevation={0}
             sx={{
+              p: 2.5,
               borderRadius: '14px',
-              border: '1.5px solid #FDE68A',
+              border: '2px solid',
+              borderColor: pricingMode === '90_PERCENT' ? '#FCA5A5' : '#93C5FD',
               backgroundColor: '#FFFFFF',
-              boxShadow: '0 4px 20px -2px rgba(217, 119, 6, 0.08)',
-              overflow: 'hidden',
-              mb: 3,
             }}
           >
-            {/* Top Product Entry Bar */}
-            <Box
-              sx={{
-                background: 'linear-gradient(135deg, #DC2626 0%, #991B1B 100%)',
-                borderBottom: '2px solid #F59E0B',
-                p: 2,
-                px: { xs: 2, sm: 2.5 },
-                color: '#FFFFFF',
-              }}
-            >
-              <Typography sx={{ fontSize: '15px', fontWeight: 800, letterSpacing: '-0.01em', mb: 1.5 }}>
-                2. Add Products from Price List
+            <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#334155', mb: 1.5 }}>
+              Bill Calculation Summary ({pricingMode === '90_PERCENT' ? '90% Mode' : `Custom ${customDiscountPercent}% Mode`})
+            </Typography>
+
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+              <Typography sx={{ color: '#64748B', fontSize: '13px', fontWeight: 600 }}>Total MRP Value:</Typography>
+              <Typography sx={{ color: '#64748B', fontSize: '13px', fontWeight: 700, textDecoration: 'line-through' }}>
+                ₹{calculations.subtotalMrp.toFixed(2)}
               </Typography>
-
-              {/* Product Selection + Qty + Rate + Add Row */}
-              <Grid container spacing={1.5} sx={{ alignItems: 'center' }}>
-                {/* Autocomplete Product Dropdown */}
-                <Grid size={{ xs: 12, sm: 5 }}>
-                  <Autocomplete
-                    size="small"
-                    autoHighlight
-                    options={productOptions}
-                    getOptionLabel={(option) => (typeof option === 'string' ? option : option.name || '')}
-                    isOptionEqualToValue={(option, val) => option.id === val.id || option.name === val.name}
-                    value={productOptions.find((p) => p.name === selectedProduct) || null}
-                    onChange={(_, val) => {
-                      if (val) {
-                        setSelectedProduct(val.name);
-                        if (val.rate !== undefined && val.rate > 0) {
-                          setRate(String(val.rate));
-                        }
-                        if (val.unit) {
-                          setUnit(val.unit);
-                        }
-                      } else {
-                        setSelectedProduct('');
-                      }
-                    }}
-                    renderOption={(props, option) => (
-                      <Box
-                        component="li"
-                        {...props}
-                        key={option.id || option.name}
-                        sx={{
-                          display: 'flex !important',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          width: '100%',
-                          py: 0.8,
-                          px: 1.5,
-                          gap: 1,
-                          borderBottom: '1px solid #FEF3C7',
-                          '&:last-child': { borderBottom: 'none' },
-                        }}
-                      >
-                        <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-                          <Typography sx={{ fontSize: '13.5px', fontWeight: 700, color: '#1F1714' }}>
-                            {option.name}
-                          </Typography>
-                          {option.category && (
-                            <Typography sx={{ fontSize: '11px', color: '#D97706', fontWeight: 600 }}>
-                              {option.category}
-                            </Typography>
-                          )}
-                        </Box>
-                        <Box sx={{ textAlign: 'right', flexShrink: 0 }}>
-                          {option.rate !== undefined && option.rate > 0 && (
-                            <Typography sx={{ fontSize: '13px', fontWeight: 800, color: '#B91C1C' }}>
-                              ₹{Number(option.rate).toLocaleString('en-IN')}
-                            </Typography>
-                          )}
-                          {option.unit && (
-                            <Typography sx={{ fontSize: '10.5px', color: '#6B7280' }}>
-                              / {option.unit}
-                            </Typography>
-                          )}
-                        </Box>
-                      </Box>
-                    )}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        placeholder="Search product from price list..."
-                        sx={{
-                          backgroundColor: '#FFFFFF',
-                          borderRadius: '6px',
-                          '& .MuiInputBase-input': {
-                            fontSize: '13px',
-                            fontWeight: 600,
-                          },
-                        }}
-                      />
-                    )}
-                  />
-                </Grid>
-
-                {/* Quantity */}
-                <Grid size={{ xs: 4, sm: 2 }}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    placeholder="Qty"
-                    type="number"
-                    value={quantity}
-                    onChange={(e) => setQuantity(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleAddProductItem();
-                      }
-                    }}
-                    sx={{
-                      backgroundColor: '#FFFFFF',
-                      borderRadius: '6px',
-                      '& .MuiInputBase-input': { fontSize: '13px', fontWeight: 600, textAlign: 'center' },
-                    }}
-                  />
-                </Grid>
-
-                {/* Rate */}
-                <Grid size={{ xs: 4, sm: 2.5 }}>
-                  <TextField
-                    fullWidth
-                    size="small"
-                    placeholder="Rate (₹)"
-                    type="number"
-                    value={rate}
-                    onChange={(e) => setRate(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleAddProductItem();
-                      }
-                    }}
-                    sx={{
-                      backgroundColor: '#FFFFFF',
-                      borderRadius: '6px',
-                      '& .MuiInputBase-input': { fontSize: '13px', fontWeight: 800, color: '#B91C1C' },
-                    }}
-                  />
-                </Grid>
-
-                {/* Add Item Button */}
-                <Grid size={{ xs: 4, sm: 2.5 }}>
-                  <Button
-                    fullWidth
-                    variant="contained"
-                    disableElevation
-                    onClick={handleAddProductItem}
-                    startIcon={<AddRoundedIcon sx={{ fontSize: 18 }} />}
-                    sx={{
-                      backgroundColor: '#FFFFFF',
-                      color: '#B91C1C',
-                      border: '1.5px solid #FDE68A',
-                      fontWeight: 800,
-                      fontSize: '13px',
-                      textTransform: 'none',
-                      height: '38px',
-                      borderRadius: '6px',
-                      boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
-                      '&:hover': { backgroundColor: '#FFFBEB' },
-                    }}
-                  >
-                    Add Item
-                  </Button>
-                </Grid>
-              </Grid>
             </Box>
 
-            {/* Current Bill Items Table */}
-            <TableContainer sx={{ minHeight: '260px', maxHeight: '380px' }}>
-              <Table stickyHeader size="small" aria-label="bill items table">
-                <TableHead>
-                  <TableRow sx={{ backgroundColor: '#FFFBEB' }}>
-                    <TableCell sx={{ fontWeight: 800, fontSize: '11.5px', color: '#7C2D12', width: '50px', backgroundColor: '#FFFBEB' }}>
-                      #
-                    </TableCell>
-                    <TableCell sx={{ fontWeight: 800, fontSize: '11.5px', color: '#7C2D12', backgroundColor: '#FFFBEB' }}>
-                      PRODUCT / PARTICULAR
-                    </TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 800, fontSize: '11.5px', color: '#7C2D12', width: '80px', backgroundColor: '#FFFBEB' }}>
-                      UNIT
-                    </TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 800, fontSize: '11.5px', color: '#7C2D12', width: '80px', backgroundColor: '#FFFBEB' }}>
-                      QTY
-                    </TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 800, fontSize: '11.5px', color: '#7C2D12', width: '100px', backgroundColor: '#FFFBEB' }}>
-                      RATE (₹)
-                    </TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 800, fontSize: '11.5px', color: '#7C2D12', width: '110px', backgroundColor: '#FFFBEB' }}>
-                      AMOUNT (₹)
-                    </TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 800, fontSize: '11.5px', color: '#7C2D12', width: '60px', backgroundColor: '#FFFBEB' }}>
-                      ACTION
-                    </TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {productRows.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={7} align="center" sx={{ py: 6, color: '#9CA3AF' }}>
-                        <Typography sx={{ fontSize: '14px', fontWeight: 600, color: '#786C58' }}>
-                          No products added to this invoice yet.
-                        </Typography>
-                        <Typography sx={{ fontSize: '12px', color: '#A8998A' }}>
-                          Select a product from the top bar and click "Add Item" to build the bill.
-                        </Typography>
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    productRows.map((row, idx) => (
-                      <TableRow key={row.id} sx={{ '&:hover': { backgroundColor: '#FEFDF5' } }}>
-                        <TableCell sx={{ fontSize: '13px', fontWeight: 700, color: '#786C58' }}>
-                          {idx + 1}
-                        </TableCell>
-                        <TableCell sx={{ fontSize: '13.5px', fontWeight: 700, color: '#1F1714' }}>
-                          {row.particular}
-                        </TableCell>
-                        <TableCell align="center" sx={{ fontSize: '12px', color: '#57463A' }}>
-                          {row.pktUnit}
-                        </TableCell>
-                        <TableCell align="center" sx={{ fontSize: '13.5px', fontWeight: 700 }}>
-                          {row.quantity}
-                        </TableCell>
-                        <TableCell align="right" sx={{ fontSize: '13.5px', fontWeight: 700, color: '#78350F' }}>
-                          ₹{Number(row.rate || 0).toFixed(2)}
-                        </TableCell>
-                        <TableCell align="right" sx={{ fontSize: '14px', fontWeight: 800, color: '#B91C1C' }}>
-                          ₹{Number(row.amount || 0).toFixed(2)}
-                        </TableCell>
-                        <TableCell align="center">
-                          <IconButton
-                            size="small"
-                            onClick={() => handleDeleteRow(row.id)}
-                            sx={{ color: '#DC2626', p: 0.5, '&:hover': { backgroundColor: '#FEF2F2' } }}
-                          >
-                            <DeleteOutlineRoundedIcon sx={{ fontSize: 16 }} />
-                          </IconButton>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+              <Typography sx={{ color: '#DC2626', fontSize: '13px', fontWeight: 700 }}>
+                Total Crackers Discount Savings:
+              </Typography>
+              <Typography sx={{ color: '#DC2626', fontSize: '13px', fontWeight: 800 }}>
+                -₹{calculations.totalDiscountAmount.toFixed(2)}
+              </Typography>
+            </Box>
+
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+              <Typography sx={{ color: '#334155', fontSize: '13.5px', fontWeight: 700 }}>Net Items Total:</Typography>
+              <Typography sx={{ color: '#334155', fontSize: '13.5px', fontWeight: 800 }}>
+                ₹{calculations.netSubtotal.toFixed(2)}
+              </Typography>
+            </Box>
+
+            <Divider sx={{ my: 1.5 }} />
+
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography sx={{ fontSize: '17px', fontWeight: 900, color: '#0F172A' }}>
+                GRAND TOTAL:
+              </Typography>
+              <Typography sx={{ fontSize: '24px', fontWeight: 900, color: pricingMode === '90_PERCENT' ? '#DC2626' : '#2563EB' }}>
+                ₹{calculations.grandTotal.toFixed(2)}
+              </Typography>
+            </Box>
+
+            {/* Action Buttons */}
+            <Box sx={{ display: 'flex', gap: 1.5 }}>
+              <Button
+                variant="contained"
+                fullWidth
+                disabled={savingBill || cartItems.length === 0}
+                onClick={() => handleSaveBill(false)}
+                sx={{
+                  py: 1.2,
+                  borderRadius: '10px',
+                  fontWeight: 800,
+                  fontSize: '14px',
+                  textTransform: 'none',
+                  backgroundColor: '#059669',
+                  '&:hover': { backgroundColor: '#047857' },
+                }}
+              >
+                {savingBill ? 'Saving...' : 'Save Bill'}
+              </Button>
+
+              <Button
+                variant="contained"
+                fullWidth
+                disabled={savingBill || cartItems.length === 0}
+                onClick={() => handleSaveBill(true)}
+                startIcon={<PrintOutlinedIcon />}
+                sx={{
+                  py: 1.2,
+                  borderRadius: '10px',
+                  fontWeight: 800,
+                  fontSize: '14px',
+                  textTransform: 'none',
+                  backgroundColor: pricingMode === '90_PERCENT' ? '#DC2626' : '#2563EB',
+                  '&:hover': {
+                    backgroundColor: pricingMode === '90_PERCENT' ? '#B91C1C' : '#1D4ED8',
+                  },
+                }}
+              >
+                Save & Print
+              </Button>
+
+              <Button
+                variant="outlined"
+                onClick={handleManualPrintPreview}
+                sx={{
+                  borderRadius: '10px',
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  textTransform: 'none',
+                  borderColor: '#64748B',
+                  color: '#334155',
+                }}
+              >
+                Preview
+              </Button>
+            </Box>
           </Paper>
         </Grid>
       </Grid>
 
-      {/* Print Bill Modal */}
-      {printModalOpen && selectedBillForPrint && (
+      {/* MODE SWITCH SAFETY CONFIRMATION DIALOG */}
+      <Dialog open={modeConfirmDialogOpen} onClose={handleCancelModeSwitch} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800, color: '#B91C1C', display: 'flex', alignItems: 'center', gap: 1 }}>
+          <WarningAmberRoundedIcon sx={{ color: '#DC2626' }} />
+          Switch Pricing Mode?
+        </DialogTitle>
+        <DialogContent>
+          <Typography sx={{ fontSize: '14px', color: '#334155', mb: 1.5, fontWeight: 500 }}>
+            Changing the price mode may update the prices of items in the current bill. Do you want to continue?
+          </Typography>
+          <Box sx={{ p: 1.5, backgroundColor: '#FEF3C7', borderRadius: '8px', border: '1px solid #FDE68A' }}>
+            <Typography sx={{ fontSize: '12.5px', fontWeight: 700, color: '#92400E' }}>
+              • Target Mode: {pendingModeSwitch?.targetMode === '90_PERCENT' ? '90% DISCOUNT' : `CUSTOM DISCOUNT (${pendingModeSwitch?.targetCustomPercent}%)`}
+            </Typography>
+            <Typography sx={{ fontSize: '12px', color: '#78350F', mt: 0.5 }}>
+              • Quantities will be preserved. Net rates and totals will be automatically recalculated.
+            </Typography>
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={handleCancelModeSwitch} sx={{ textTransform: 'none', fontWeight: 600 }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleConfirmModeSwitch}
+            sx={{
+              textTransform: 'none',
+              fontWeight: 800,
+              backgroundColor: pendingModeSwitch?.targetMode === '90_PERCENT' ? '#DC2626' : '#2563EB',
+            }}
+          >
+            Continue & Recalculate
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* PRINT PREVIEW MODAL */}
+      {printModalOpen && billToPrint && (
         <BillPrintModal
           open={printModalOpen}
-          onClose={() => {
-            setPrintModalOpen(false);
-            setSelectedBillForPrint(null);
-          }}
-          bill={selectedBillForPrint}
+          onClose={() => setPrintModalOpen(false)}
+          bill={billToPrint}
         />
       )}
+
+      {/* TOAST SNACKBAR */}
+      <Snackbar
+        open={toast.open}
+        autoHideDuration={4000}
+        onClose={() => setToast((prev) => ({ ...prev, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setToast((prev) => ({ ...prev, open: false }))}
+          severity={toast.severity}
+          sx={{ width: '100%', fontWeight: 600 }}
+        >
+          {toast.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };
+
+export default ParticularsPage;

@@ -9,23 +9,22 @@ import { ProductsPage } from './components/ProductsPage';
 import { AllCustomersPage } from './components/AllCustomersPage';
 import { AddCustomerPage } from './components/AddCustomerPage';
 import { ParticularsPage } from './components/ParticularsPage';
+import { ReportsPage } from './components/ReportsPage';
 import { SettingsPage, getStoredSettings } from './components/SettingsPage';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     return Boolean(localStorage.getItem('dheeksha_auth_token'));
   });
-  const [activeTab, setActiveTab] = useState<NavTab>('All Customers');
+  const [activeTab, setActiveTab] = useState<NavTab>('Billing');
   const [customerSubView, setCustomerSubView] = useState<'list' | 'add'>('list');
   const [selectedCustomerName, setSelectedCustomerName] = useState<string>('');
 
   useEffect(() => {
-    // Clear legacy sticky customer if present
-    localStorage.removeItem('dheeksha_active_customer');
     const updateTitle = () => {
       const settings = getStoredSettings();
       if (settings.companyName) {
-        document.title = `${settings.companyName} - Billing & Management`;
+        document.title = `${settings.companyName} - Dual Pricing Crackers Billing`;
       }
     };
     updateTitle();
@@ -42,7 +41,6 @@ function App() {
   const handleLogout = () => {
     localStorage.removeItem('dheeksha_auth_token');
     localStorage.removeItem('dheeksha_auth_user');
-    localStorage.removeItem('dheeksha_active_customer');
     setIsAuthenticated(false);
   };
 
@@ -89,6 +87,13 @@ function App() {
         />
 
         <Box component="main" sx={{ flexGrow: 1, width: '100%', py: 0.5 }}>
+          {/* Billing Tab (Main Dual Mode Desk) */}
+          {activeTab === 'Billing' && (
+            <ParticularsPage
+              initialCustomerName={selectedCustomerName}
+            />
+          )}
+
           {/* All Customers Tab */}
           {activeTab === 'All Customers' && (
             <>
@@ -106,20 +111,16 @@ function App() {
             </>
           )}
 
-          {/* Billing / Particulars Tab */}
-          {activeTab === 'Billing' && (
-            <ParticularsPage
-              initialCustomerName={selectedCustomerName}
-            />
-          )}
+          {/* Price List Tab (Dual Modes & Discount Config) */}
+          {activeTab === 'Price List' && <PriceListPage />}
+
+          {/* Sales Reports Tab */}
+          {activeTab === 'Reports' && <ReportsPage />}
 
           {/* Categories Tab */}
           {activeTab === 'Categories' && <CategoriesPage />}
 
-          {/* Price List Tab */}
-          {activeTab === 'Price List' && <PriceListPage />}
-
-          {/* Products Tab */}
+          {/* Products Tab (Unified Inventory) */}
           {activeTab === 'Product' && <ProductsPage />}
 
           {/* Settings Tab */}

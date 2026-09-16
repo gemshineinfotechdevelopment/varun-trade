@@ -1,20 +1,37 @@
 import { Router } from 'express';
 import {
-  getPriceList,
+  getPriceLists,
+  importPriceList,
+  getBillingProducts,
   createPriceListItem,
-  bulkImportPriceList,
   updatePriceListItem,
   deletePriceListItem,
-  deletePriceListBatch,
   clearAllPriceList,
 } from '../controllers/priceListController';
 
 const router = Router();
 
-router.route('/').get(getPriceList).post(createPriceListItem);
-router.post('/bulk', bulkImportPriceList);
-router.delete('/batch/:batchName', deletePriceListBatch);
+// Base Price List collection routes
+router.route('/').get(getPriceLists).post(createPriceListItem);
+
+// Import & Billing Search routes
+router.post('/import', importPriceList);
+router.post('/bulk', importPriceList); // alias
+router.get('/billing/products', getBillingProducts);
+
+// Named helper routes
+router.get('/90', (req, res) => {
+  req.query.type = '90_PERCENT';
+  getPriceLists(req, res);
+});
+router.get('/custom', (req, res) => {
+  req.query.type = 'CUSTOM';
+  getPriceLists(req, res);
+});
+
 router.delete('/clear/all', clearAllPriceList);
+
+// Specific item routes
 router.route('/:id').put(updatePriceListItem).delete(deletePriceListItem);
 
 export default router;

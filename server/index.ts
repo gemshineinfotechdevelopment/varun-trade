@@ -18,6 +18,7 @@ import priceListRoutes from './routes/priceListRoutes';
 import particularRoutes from './routes/particularRoutes';
 import accountRoutes from './routes/accountRoutes';
 import authRoutes from './routes/authRoutes';
+import customDiscountRoutes from './routes/customDiscountRoutes';
 import { seedDefaultAdmin } from './controllers/authController';
 
 const app: Application = express();
@@ -48,22 +49,18 @@ const allowedOrigins = [
 
 const corsOptions: cors.CorsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    // Allow requests with no origin (like mobile apps, curl, Postman, server-to-server)
     if (!origin) return callback(null, true);
 
-    // Allow wildcard in CORS_ORIGIN if specified
     if (process.env.CORS_ORIGIN === '*' || allowedOrigins.includes('*')) {
       return callback(null, true);
     }
 
-    // Allow any localhost / 127.0.0.1 port or local network IPs
     const isLocalhost = /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$/.test(origin);
 
     if (isLocalhost || allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
-    // Fallback for non-production environments
     if (process.env.NODE_ENV !== 'production') {
       return callback(null, true);
     }
@@ -108,7 +105,10 @@ app.use('/api/companies', companyRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/pricelists', priceListRoutes);
+app.use('/api/price-lists', priceListRoutes);
+app.use('/api/custom-discounts', customDiscountRoutes);
 app.use('/api/particulars', particularRoutes);
+app.use('/api/bills', particularRoutes);
 app.use('/api/accounts', accountRoutes);
 
 // Global Error Handler

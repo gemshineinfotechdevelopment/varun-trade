@@ -290,6 +290,186 @@ export const PriceListPage: FC = () => {
     }
   };
 
+  // Download Sample Excel Template
+  const handleDownloadTemplate = (type: '90_PERCENT' | 'CUSTOM') => {
+    if (type === '90_PERCENT') {
+      const templateData = [
+        {
+          'S.No': 1,
+          'Product Code / SKU': 'FP1001',
+          'Product Name': 'Flower Pot Big',
+          'Product Category': 'Flower Pots',
+          'MRP Price / Rate': 100,
+          '90% Discount': 90,
+          'Per / PCS': 'Box',
+          'Net Rate': 10,
+          'Stock': 500,
+        },
+        {
+          'S.No': 2,
+          'Product Code / SKU': 'GC1002',
+          'Product Name': 'Ground Chakkar Big (25 Pcs)',
+          'Product Category': 'Ground Wheels',
+          'MRP Price / Rate': 200,
+          '90% Discount': 90,
+          'Per / PCS': 'Box',
+          'Net Rate': 20,
+          'Stock': 400,
+        },
+        {
+          'S.No': 3,
+          'Product Code / SKU': 'SP1003',
+          'Product Name': '10cm Electric Sparklers (10 Pcs)',
+          'Product Category': 'Sparklers',
+          'MRP Price / Rate': 80,
+          '90% Discount': 90,
+          'Per / PCS': 'Box',
+          'Net Rate': 8,
+          'Stock': 600,
+        },
+        {
+          'S.No': 4,
+          'Product Code / SKU': 'SS1004',
+          'Product Name': '12 Shots Multi Color Sky Shots',
+          'Product Category': 'Sky Shots',
+          'MRP Price / Rate': 450,
+          '90% Discount': 90,
+          'Per / PCS': 'Box',
+          'Net Rate': 45,
+          'Stock': 200,
+        },
+        {
+          'S.No': 5,
+          'Product Code / SKU': 'GL1005',
+          'Product Name': '1000 Wala Red Giant Garland',
+          'Product Category': 'Garlands / Laris',
+          'MRP Price / Rate': 900,
+          '90% Discount': 90,
+          'Per / PCS': 'Box',
+          'Net Rate': 90,
+          'Stock': 150,
+        },
+        {
+          'S.No': 6,
+          'Product Code / SKU': 'BR1006',
+          'Product Name': 'Baby Rocket (10 Pcs)',
+          'Product Category': 'Rockets',
+          'MRP Price / Rate': 140,
+          '90% Discount': 90,
+          'Per / PCS': 'Box',
+          'Net Rate': 14,
+          'Stock': 250,
+        },
+      ];
+
+      const worksheet = XLSX.utils.json_to_sheet(templateData);
+      worksheet['!cols'] = [
+        { wch: 6 },
+        { wch: 22 },
+        { wch: 36 },
+        { wch: 20 },
+        { wch: 18 },
+        { wch: 16 },
+        { wch: 12 },
+        { wch: 14 },
+        { wch: 10 },
+      ];
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, '90% Price List Template');
+      XLSX.writeFile(workbook, 'Crackers_90_Percent_PriceList_Template.xlsx');
+    } else {
+      const templateData = [
+        {
+          'S.No': 1,
+          'Product Code / SKU': 'FP1001',
+          'Product Name': 'Flower Pot Big',
+          'Product Category': 'Flower Pots',
+          'MRP Price / Rate': 150,
+          'Discount %': 40,
+          'Per / PCS': 'Box',
+          'Net Rate': 90,
+          'Stock': 500,
+        },
+        {
+          'S.No': 2,
+          'Product Code / SKU': 'GC1002',
+          'Product Name': 'Ground Chakkar Big (25 Pcs)',
+          'Product Category': 'Ground Wheels',
+          'MRP Price / Rate': 250,
+          'Discount %': 30,
+          'Per / PCS': 'Box',
+          'Net Rate': 175,
+          'Stock': 400,
+        },
+        {
+          'S.No': 3,
+          'Product Code / SKU': 'SP1003',
+          'Product Name': '10cm Electric Sparklers (10 Pcs)',
+          'Product Category': 'Sparklers',
+          'MRP Price / Rate': 100,
+          'Discount %': 35,
+          'Per / PCS': 'Box',
+          'Net Rate': 65,
+          'Stock': 600,
+        },
+        {
+          'S.No': 4,
+          'Product Code / SKU': 'SS1004',
+          'Product Name': '12 Shots Multi Color Sky Shots',
+          'Product Category': 'Sky Shots',
+          'MRP Price / Rate': 550,
+          'Discount %': 40,
+          'Per / PCS': 'Box',
+          'Net Rate': 330,
+          'Stock': 200,
+        },
+        {
+          'S.No': 5,
+          'Product Code / SKU': 'GL1005',
+          'Product Name': '1000 Wala Red Giant Garland',
+          'Product Category': 'Garlands / Laris',
+          'MRP Price / Rate': 1100,
+          'Discount %': 30,
+          'Per / PCS': 'Box',
+          'Net Rate': 770,
+          'Stock': 150,
+        },
+        {
+          'S.No': 6,
+          'Product Code / SKU': 'TB2001',
+          'Product Name': 'Titanium Sound Bomb (10 Pcs)',
+          'Product Category': 'Sound Crackers',
+          'MRP Price / Rate': 300,
+          'Discount %': 30,
+          'Per / PCS': 'Box',
+          'Net Rate': 210,
+          'Stock': 180,
+        },
+      ];
+
+      const worksheet = XLSX.utils.json_to_sheet(templateData);
+      worksheet['!cols'] = [
+        { wch: 6 },
+        { wch: 22 },
+        { wch: 36 },
+        { wch: 20 },
+        { wch: 18 },
+        { wch: 16 },
+        { wch: 12 },
+        { wch: 14 },
+        { wch: 10 },
+      ];
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Custom Price List Template');
+      XLSX.writeFile(workbook, 'Crackers_Custom_PriceList_Template.xlsx');
+    }
+    setToast({
+      open: true,
+      message: `Downloaded ${type === '90_PERCENT' ? '90%' : 'Custom'} Discount Price List Excel template.`,
+      severity: 'success',
+    });
+  };
+
   // Excel File Parsing with Validation & Preview (Strictly applies UI-selected priceListType)
   const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -320,15 +500,21 @@ export const PriceListPage: FC = () => {
             row['productName'] ||
             row['Item Name'] ||
             row['itemName'] ||
+            row['Product'] ||
+            row['Particulars'] ||
             row['Description'] ||
             ''
           ).trim();
 
-          const slNo = Number(row['S.No'] || row['Sl No'] || idx + 1);
+          const slNo = Number(row['S.No'] || row['Sl No'] || row['Sl.No'] || idx + 1);
           const sku = String(
+            row['Product Code / SKU'] ||
+            row['Product Code'] ||
+            row['Product code'] ||
             row['SKU'] ||
             row['sku'] ||
-            row['Product Code'] ||
+            row['Code'] ||
+            row['Item Code'] ||
             `CK-${String(slNo).padStart(3, '0')}`
           ).trim().toUpperCase();
 
@@ -342,11 +528,15 @@ export const PriceListPage: FC = () => {
           }
 
           const rate = Number(
+            row['MRP Price / Rate'] ||
+            row['MRP Price'] ||
+            row['MRP Rate'] ||
+            row['MRP'] ||
             row['Rate'] ||
             row['Product Rate'] ||
             row['rate'] ||
-            row['MRP'] ||
             row['Price'] ||
+            row['mrp'] ||
             0
           );
 
@@ -357,20 +547,53 @@ export const PriceListPage: FC = () => {
           const defaultDisc = currentType === '90_PERCENT' ? 90 : 30;
           const discPct = currentType === '90_PERCENT'
             ? 90
-            : Number(row['Discount %'] || row['Discount Percentage'] || row['discountPercentage'] || defaultDisc);
+            : Number(
+                row['90% Discount'] ||
+                row['Discount %'] ||
+                row['Discount Percentage'] ||
+                row['Discount'] ||
+                row['discountPercentage'] ||
+                row['discountPercent'] ||
+                defaultDisc
+              );
 
           const discAmt = Math.round(((rate * discPct) / 100) * 100) / 100;
-          const netRate = Number(
+          const rawNet = Number(
             row['Net Rate'] ||
+            row['Net Price'] ||
             row['Selling Price'] ||
+            row['Selling Rate'] ||
+            row['Final Selling Price'] ||
             row['netRate'] ||
-            Math.max(0, rate - discAmt)
+            0
           );
+          const netRate = rawNet > 0 ? rawNet : Math.max(0, Math.round((rate - discAmt) * 100) / 100);
 
-          const quantity = Number(row['Quantity / Count'] || row['Qty'] || row['quantity'] || row['Count'] || 10);
-          const category = String(row['Category'] || row['category'] || 'General').trim();
-          const unit = String(row['Per / PCS'] || row['Unit'] || row['unit'] || 'Box').trim();
-          const stock = Number(row['Stock'] || row['stock'] || 100);
+          const quantity = Number(
+            row['Quantity / Count'] ||
+            row['Quantity'] ||
+            row['Qty'] ||
+            row['quantity'] ||
+            row['Count'] ||
+            10
+          );
+          const category = String(
+            row['Product Category'] ||
+            row['Category'] ||
+            row['category'] ||
+            row['Group'] ||
+            'General'
+          ).trim();
+          const unit = String(
+            row['Per / PCS'] ||
+            row['Per/PCS'] ||
+            row['Unit'] ||
+            row['unit'] ||
+            row['Per'] ||
+            row['PCS'] ||
+            'Box'
+          ).trim();
+          const stock = Number(row['Stock'] || row['Physical Stock'] || row['stock'] || 100);
 
           return {
             slNo,
@@ -382,8 +605,8 @@ export const PriceListPage: FC = () => {
             rate,
             discountPercentage: discPct,
             discountAmount: discAmt,
-            netRate: netRate > 0 ? netRate : Math.max(0, Math.round((rate - discAmt) * 100) / 100),
-            quantity: !isNaN(quantity) ? quantity : 10,
+            netRate,
+            quantity: !isNaN(quantity) && quantity > 0 ? quantity : 10,
             unit: unit || 'Box',
             stock: !isNaN(stock) ? stock : 100,
             active: true,
@@ -437,19 +660,30 @@ export const PriceListPage: FC = () => {
     const currentType: PriceListType = activeTab === 'CUSTOM' ? 'CUSTOM' : '90_PERCENT';
     const dataToExport = filteredItems.map((item, idx) => ({
       'S.No': idx + 1,
-      'SKU': item.sku,
+      'Product Code / SKU': item.sku,
       'Product Name': item.productName || item.itemName,
-      'Category': item.category,
-      'Rate': item.rate,
-      'Discount %': item.discountPercentage,
-      'Discount Amount': item.discountAmount,
-      'Net Rate': item.netRate,
-      'Quantity / Count': item.quantity,
+      'Product Category': item.category,
+      'MRP Price / Rate': item.rate,
+      ...(currentType === '90_PERCENT'
+        ? { '90% Discount': 90 }
+        : { 'Discount %': item.discountPercentage }),
       'Per / PCS': item.unit,
-      'Physical Stock': item.stock ?? 100,
+      'Net Rate': item.netRate,
+      'Stock': item.stock ?? 100,
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    worksheet['!cols'] = [
+      { wch: 6 },
+      { wch: 22 },
+      { wch: 36 },
+      { wch: 20 },
+      { wch: 18 },
+      { wch: 16 },
+      { wch: 12 },
+      { wch: 14 },
+      { wch: 10 },
+    ];
     const workbook = XLSX.utils.book_new();
     const sheetName = currentType === '90_PERCENT' ? '90% Price List' : 'Custom Price List';
     XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
@@ -704,7 +938,27 @@ export const PriceListPage: FC = () => {
               </FormControl>
             </Box>
 
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+              <Button
+                variant="outlined"
+                startIcon={<DownloadRoundedIcon />}
+                onClick={() => handleDownloadTemplate(activeTab as '90_PERCENT' | 'CUSTOM')}
+                sx={{
+                  borderRadius: '10px',
+                  borderColor: '#6366F1',
+                  color: '#4F46E5',
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  textTransform: 'none',
+                  '&:hover': {
+                    borderColor: '#4338CA',
+                    backgroundColor: '#EEF2FF',
+                  },
+                }}
+              >
+                Template ({activeTab === '90_PERCENT' ? '90%' : 'Custom'})
+              </Button>
+
               <Button
                 variant="outlined"
                 startIcon={<CloudUploadRoundedIcon />}
@@ -1164,12 +1418,36 @@ export const PriceListPage: FC = () => {
           Import Preview: {uploadFileName} ({previewItems.length} Products)
         </DialogTitle>
         <DialogContent sx={{ pt: 1 }}>
-          <Typography variant="body2" sx={{ color: '#64748B', mb: 2 }}>
+          <Typography variant="body2" sx={{ color: '#64748B', mb: 1.5 }}>
             Target Price List:{' '}
             <strong style={{ color: activeTab === '90_PERCENT' ? '#DC2626' : '#2563EB' }}>
               {activeTab === '90_PERCENT' ? 'PRICE LIST 1 — 90% DISCOUNT PRICE LIST' : 'PRICE LIST 2 — CUSTOM DISCOUNT PRICE LIST'}
             </strong>
           </Typography>
+
+          <Box sx={{ mb: 2, display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', p: 1.2, backgroundColor: '#F8FAFC', borderRadius: '8px', border: '1px dashed #CBD5E1' }}>
+            <Typography variant="caption" sx={{ fontWeight: 700, color: '#475569' }}>
+              Download Sample Templates:
+            </Typography>
+            <Button
+              size="small"
+              variant="text"
+              startIcon={<DownloadRoundedIcon />}
+              onClick={() => handleDownloadTemplate('90_PERCENT')}
+              sx={{ textTransform: 'none', fontWeight: 700, color: '#DC2626', fontSize: '11.5px', py: 0 }}
+            >
+              90% Template (.xlsx)
+            </Button>
+            <Button
+              size="small"
+              variant="text"
+              startIcon={<DownloadRoundedIcon />}
+              onClick={() => handleDownloadTemplate('CUSTOM')}
+              sx={{ textTransform: 'none', fontWeight: 700, color: '#2563EB', fontSize: '11.5px', py: 0 }}
+            >
+              Custom Template (.xlsx)
+            </Button>
+          </Box>
 
           {uploadErrors.length > 0 && (
             <Alert severity="warning" sx={{ mb: 2, maxHeight: 120, overflowY: 'auto' }}>

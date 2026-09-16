@@ -218,26 +218,115 @@ export const importPriceList = async (req: Request, res: Response): Promise<void
 
     for (let idx = 0; idx < items.length; idx++) {
       const raw = items[idx];
-      const name = cleanToEnglish(String(raw.productName || raw.itemName || raw.name || raw['Product Name'] || raw['Item Name'] || ''));
+      const name = cleanToEnglish(
+        String(
+          raw.productName ||
+          raw.itemName ||
+          raw.name ||
+          raw['Product Name'] ||
+          raw['productName'] ||
+          raw['Item Name'] ||
+          raw['itemName'] ||
+          raw['Product'] ||
+          raw['Particulars'] ||
+          raw['Description'] ||
+          ''
+        )
+      );
       if (!name) continue;
 
-      const slNo = Number(raw.slNo || raw['S.No'] || currentCount + idx + 1);
-      const sku = String(raw.sku || raw.SKU || raw['Product Code'] || `CK-${String(slNo).padStart(3, '0')}`).trim().toUpperCase();
+      const slNo = Number(raw.slNo || raw['S.No'] || raw['Sl No'] || raw['Sl.No'] || currentCount + idx + 1);
+      const sku = String(
+        raw.sku ||
+        raw.SKU ||
+        raw['Product Code / SKU'] ||
+        raw['Product Code'] ||
+        raw['Product code'] ||
+        raw['sku'] ||
+        raw['Code'] ||
+        raw['Item Code'] ||
+        `CK-${String(slNo).padStart(3, '0')}`
+      ).trim().toUpperCase();
 
       if (seenSkus.has(sku)) continue; // Skip in-file duplicates
       seenSkus.add(sku);
 
-      const rate = Number(raw.rate || raw['Rate'] || raw['Product Rate'] || raw.mrp || raw.MRP || 0);
+      const rate = Number(
+        raw.rate ||
+        raw['MRP Price / Rate'] ||
+        raw['MRP Price'] ||
+        raw['MRP Rate'] ||
+        raw['MRP'] ||
+        raw['Rate'] ||
+        raw['Product Rate'] ||
+        raw['rate'] ||
+        raw['Price'] ||
+        raw.mrp ||
+        raw.MRP ||
+        0
+      );
+
+      const defaultDisc = targetType === '90_PERCENT' ? 90 : 30;
       const discountPercentage = targetType === '90_PERCENT'
         ? 90
-        : Number(raw.discountPercentage || raw['Discount %'] || raw.discountPercent || raw.discount || 30);
+        : Number(
+            raw.discountPercentage ||
+            raw['Discount %'] ||
+            raw['Discount Percentage'] ||
+            raw['90% Discount'] ||
+            raw['Discount'] ||
+            raw.discountPercent ||
+            raw.discount ||
+            defaultDisc
+          );
 
       const discountAmount = Math.round(((rate * discountPercentage) / 100) * 100) / 100;
-      const netRate = Number(raw.netRate || raw['Net Rate'] || raw['Selling Price'] || (rate - discountAmount));
-      const quantity = Number(raw.quantity || raw['Quantity / Count'] || raw['Qty'] || raw['Count'] || 10);
-      const unit = cleanToEnglish(String(raw.unit || raw['Per / PCS'] || raw['Unit'] || 'Box')) || 'Box';
-      const category = cleanToEnglish(String(raw.category || raw['Category'] || 'General')) || 'General';
-      const stock = Number(raw.stock || raw['Stock'] || 100);
+      const rawNet = Number(
+        raw.netRate ||
+        raw['Net Rate'] ||
+        raw['Net Price'] ||
+        raw['netRate'] ||
+        raw['Selling Price'] ||
+        raw['Selling Rate'] ||
+        raw['Final Selling Price'] ||
+        0
+      );
+      const netRate = rawNet > 0 ? rawNet : Math.max(0, Math.round((rate - discountAmount) * 100) / 100);
+
+      const quantity = Number(
+        raw.quantity ||
+        raw['Quantity / Count'] ||
+        raw['Quantity'] ||
+        raw['Qty'] ||
+        raw['Count'] ||
+        10
+      );
+
+      const unit = cleanToEnglish(
+        String(
+          raw.unit ||
+          raw['Per / PCS'] ||
+          raw['Per/PCS'] ||
+          raw['Unit'] ||
+          raw['unit'] ||
+          raw['Per'] ||
+          raw['PCS'] ||
+          'Box'
+        )
+      ) || 'Box';
+
+      const category = cleanToEnglish(
+        String(
+          raw.category ||
+          raw['Product Category'] ||
+          raw['Category'] ||
+          raw['category'] ||
+          raw['Group'] ||
+          'General'
+        )
+      ) || 'General';
+
+      const stock = Number(raw.stock || raw['Stock'] || raw['Physical Stock'] || 100);
 
       formattedItems.push({
         slNo,
@@ -249,10 +338,10 @@ export const importPriceList = async (req: Request, res: Response): Promise<void
         rate,
         discountPercentage,
         discountAmount,
-        netRate: netRate > 0 ? netRate : Math.max(0, rate - discountAmount),
-        quantity,
+        netRate,
+        quantity: !isNaN(quantity) && quantity > 0 ? quantity : 10,
         unit,
-        stock,
+        stock: !isNaN(stock) ? stock : 100,
         active: true,
         batchName: batchTitle,
       });

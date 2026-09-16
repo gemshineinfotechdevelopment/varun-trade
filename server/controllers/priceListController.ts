@@ -266,21 +266,6 @@ export const importPriceList = async (req: Request, res: Response): Promise<void
         0
       );
 
-      const defaultDisc = targetType === '90_PERCENT' ? 90 : 30;
-      const discountPercentage = targetType === '90_PERCENT'
-        ? 90
-        : Number(
-            raw.discountPercentage ||
-            raw['Discount %'] ||
-            raw['Discount Percentage'] ||
-            raw['90% Discount'] ||
-            raw['Discount'] ||
-            raw.discountPercent ||
-            raw.discount ||
-            defaultDisc
-          );
-
-      const discountAmount = Math.round(((rate * discountPercentage) / 100) * 100) / 100;
       const rawNet = Number(
         raw.netRate ||
         raw['Net Rate'] ||
@@ -291,7 +276,47 @@ export const importPriceList = async (req: Request, res: Response): Promise<void
         raw['Final Selling Price'] ||
         0
       );
-      const netRate = rawNet > 0 ? rawNet : Math.max(0, Math.round((rate - discountAmount) * 100) / 100);
+
+      let discountPercentage = targetType === '90_PERCENT' ? 90 : 0;
+      let discountAmount = 0;
+      let netRate = 0;
+
+      const hasExplicitDiscount =
+        raw.discountPercentage !== undefined ||
+        raw['Discount %'] !== undefined ||
+        raw['Discount Percentage'] !== undefined ||
+        raw['90% Discount'] !== undefined ||
+        raw['Discount'] !== undefined ||
+        raw.discountPercent !== undefined ||
+        raw.discount !== undefined;
+
+      if (targetType === '90_PERCENT') {
+        discountPercentage = 90;
+        discountAmount = Math.round(((rate * 90) / 100) * 100) / 100;
+        netRate = rawNet > 0 ? rawNet : Math.max(0, Math.round((rate - discountAmount) * 100) / 100);
+      } else {
+        if (rawNet > 0 && rate > 0) {
+          netRate = rawNet;
+          discountAmount = Math.max(0, Math.round((rate - rawNet) * 100) / 100);
+          discountPercentage = Math.round(((rate - rawNet) / rate) * 100);
+        } else if (hasExplicitDiscount) {
+          discountPercentage = Number(
+            raw.discountPercentage ||
+            raw['Discount %'] ||
+            raw['Discount Percentage'] ||
+            raw['Discount'] ||
+            raw.discountPercent ||
+            raw.discount ||
+            0
+          );
+          discountAmount = Math.round(((rate * discountPercentage) / 100) * 100) / 100;
+          netRate = Math.max(0, Math.round((rate - discountAmount) * 100) / 100);
+        } else {
+          netRate = rawNet > 0 ? rawNet : rate;
+          discountAmount = Math.max(0, Math.round((rate - netRate) * 100) / 100);
+          discountPercentage = rate > 0 ? Math.round(((rate - netRate) / rate) * 100) : 0;
+        }
+      }
 
       const quantity = Number(
         raw.quantity ||

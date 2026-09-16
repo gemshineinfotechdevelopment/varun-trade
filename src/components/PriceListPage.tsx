@@ -290,7 +290,7 @@ export const PriceListPage: FC = () => {
     }
   };
 
-  // Download Sample Excel Template
+  // Download Sample Excel Template (Contains Product Name, Category, MRP Rate, Unit)
   const handleDownloadTemplate = (type: '90_PERCENT' | 'CUSTOM') => {
     if (type === '90_PERCENT') {
       const templateData = [
@@ -300,10 +300,7 @@ export const PriceListPage: FC = () => {
           'Product Name': 'Flower Pot Big',
           'Product Category': 'Flower Pots',
           'MRP Price / Rate': 100,
-          '90% Discount': 90,
           'Per / PCS': 'Box',
-          'Net Rate': 10,
-          'Stock': 500,
         },
         {
           'S.No': 2,
@@ -311,10 +308,7 @@ export const PriceListPage: FC = () => {
           'Product Name': 'Ground Chakkar Big (25 Pcs)',
           'Product Category': 'Ground Wheels',
           'MRP Price / Rate': 200,
-          '90% Discount': 90,
           'Per / PCS': 'Box',
-          'Net Rate': 20,
-          'Stock': 400,
         },
         {
           'S.No': 3,
@@ -322,10 +316,7 @@ export const PriceListPage: FC = () => {
           'Product Name': '10cm Electric Sparklers (10 Pcs)',
           'Product Category': 'Sparklers',
           'MRP Price / Rate': 80,
-          '90% Discount': 90,
           'Per / PCS': 'Box',
-          'Net Rate': 8,
-          'Stock': 600,
         },
         {
           'S.No': 4,
@@ -333,10 +324,7 @@ export const PriceListPage: FC = () => {
           'Product Name': '12 Shots Multi Color Sky Shots',
           'Product Category': 'Sky Shots',
           'MRP Price / Rate': 450,
-          '90% Discount': 90,
           'Per / PCS': 'Box',
-          'Net Rate': 45,
-          'Stock': 200,
         },
         {
           'S.No': 5,
@@ -344,10 +332,7 @@ export const PriceListPage: FC = () => {
           'Product Name': '1000 Wala Red Giant Garland',
           'Product Category': 'Garlands / Laris',
           'MRP Price / Rate': 900,
-          '90% Discount': 90,
           'Per / PCS': 'Box',
-          'Net Rate': 90,
-          'Stock': 150,
         },
         {
           'S.No': 6,
@@ -355,10 +340,7 @@ export const PriceListPage: FC = () => {
           'Product Name': 'Baby Rocket (10 Pcs)',
           'Product Category': 'Rockets',
           'MRP Price / Rate': 140,
-          '90% Discount': 90,
           'Per / PCS': 'Box',
-          'Net Rate': 14,
-          'Stock': 250,
         },
       ];
 
@@ -369,10 +351,7 @@ export const PriceListPage: FC = () => {
         { wch: 36 },
         { wch: 20 },
         { wch: 18 },
-        { wch: 16 },
         { wch: 12 },
-        { wch: 14 },
-        { wch: 10 },
       ];
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, '90% Price List Template');
@@ -385,10 +364,7 @@ export const PriceListPage: FC = () => {
           'Product Name': 'Flower Pot Big',
           'Product Category': 'Flower Pots',
           'MRP Price / Rate': 150,
-          'Discount %': 40,
           'Per / PCS': 'Box',
-          'Net Rate': 90,
-          'Stock': 500,
         },
         {
           'S.No': 2,
@@ -396,10 +372,7 @@ export const PriceListPage: FC = () => {
           'Product Name': 'Ground Chakkar Big (25 Pcs)',
           'Product Category': 'Ground Wheels',
           'MRP Price / Rate': 250,
-          'Discount %': 30,
           'Per / PCS': 'Box',
-          'Net Rate': 175,
-          'Stock': 400,
         },
         {
           'S.No': 3,
@@ -407,10 +380,7 @@ export const PriceListPage: FC = () => {
           'Product Name': '10cm Electric Sparklers (10 Pcs)',
           'Product Category': 'Sparklers',
           'MRP Price / Rate': 100,
-          'Discount %': 35,
           'Per / PCS': 'Box',
-          'Net Rate': 65,
-          'Stock': 600,
         },
         {
           'S.No': 4,
@@ -418,10 +388,7 @@ export const PriceListPage: FC = () => {
           'Product Name': '12 Shots Multi Color Sky Shots',
           'Product Category': 'Sky Shots',
           'MRP Price / Rate': 550,
-          'Discount %': 40,
           'Per / PCS': 'Box',
-          'Net Rate': 330,
-          'Stock': 200,
         },
         {
           'S.No': 5,
@@ -429,10 +396,7 @@ export const PriceListPage: FC = () => {
           'Product Name': '1000 Wala Red Giant Garland',
           'Product Category': 'Garlands / Laris',
           'MRP Price / Rate': 1100,
-          'Discount %': 30,
           'Per / PCS': 'Box',
-          'Net Rate': 770,
-          'Stock': 150,
         },
         {
           'S.No': 6,
@@ -440,10 +404,7 @@ export const PriceListPage: FC = () => {
           'Product Name': 'Titanium Sound Bomb (10 Pcs)',
           'Product Category': 'Sound Crackers',
           'MRP Price / Rate': 300,
-          'Discount %': 30,
           'Per / PCS': 'Box',
-          'Net Rate': 210,
-          'Stock': 180,
         },
       ];
 
@@ -454,10 +415,7 @@ export const PriceListPage: FC = () => {
         { wch: 36 },
         { wch: 20 },
         { wch: 18 },
-        { wch: 16 },
         { wch: 12 },
-        { wch: 14 },
-        { wch: 10 },
       ];
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Custom Price List Template');
@@ -544,20 +502,6 @@ export const PriceListPage: FC = () => {
             errors.push(`Row ${idx + 2}: Invalid rate for "${name || sku}".`);
           }
 
-          const defaultDisc = currentType === '90_PERCENT' ? 90 : 30;
-          const discPct = currentType === '90_PERCENT'
-            ? 90
-            : Number(
-                row['90% Discount'] ||
-                row['Discount %'] ||
-                row['Discount Percentage'] ||
-                row['Discount'] ||
-                row['discountPercentage'] ||
-                row['discountPercent'] ||
-                defaultDisc
-              );
-
-          const discAmt = Math.round(((rate * discPct) / 100) * 100) / 100;
           const rawNet = Number(
             row['Net Rate'] ||
             row['Net Price'] ||
@@ -567,7 +511,35 @@ export const PriceListPage: FC = () => {
             row['netRate'] ||
             0
           );
-          const netRate = rawNet > 0 ? rawNet : Math.max(0, Math.round((rate - discAmt) * 100) / 100);
+
+          let discPct = currentType === '90_PERCENT' ? 90 : 0;
+          let discAmt = 0;
+          let netRate = 0;
+
+          if (currentType === '90_PERCENT') {
+            discPct = 90;
+            discAmt = Math.round(((rate * 90) / 100) * 100) / 100;
+            netRate = rawNet > 0 ? rawNet : Math.max(0, Math.round((rate - discAmt) * 100) / 100);
+          } else {
+            if (rawNet > 0 && rate > 0) {
+              netRate = rawNet;
+              discAmt = Math.max(0, Math.round((rate - rawNet) * 100) / 100);
+              discPct = Math.round(((rate - rawNet) / rate) * 100);
+            } else if (
+              row['Discount %'] !== undefined ||
+              row['Discount Percentage'] !== undefined ||
+              row['Discount'] !== undefined ||
+              row['discountPercentage'] !== undefined
+            ) {
+              discPct = Number(row['Discount %'] || row['Discount Percentage'] || row['Discount'] || row['discountPercentage'] || 0);
+              discAmt = Math.round(((rate * discPct) / 100) * 100) / 100;
+              netRate = Math.max(0, Math.round((rate - discAmt) * 100) / 100);
+            } else {
+              netRate = rawNet > 0 ? rawNet : rate;
+              discAmt = Math.max(0, Math.round((rate - netRate) * 100) / 100);
+              discPct = rate > 0 ? Math.round(((rate - netRate) / rate) * 100) : 0;
+            }
+          }
 
           const quantity = Number(
             row['Quantity / Count'] ||
@@ -664,9 +636,6 @@ export const PriceListPage: FC = () => {
       'Product Name': item.productName || item.itemName,
       'Product Category': item.category,
       'MRP Price / Rate': item.rate,
-      ...(currentType === '90_PERCENT'
-        ? { '90% Discount': 90 }
-        : { 'Discount %': item.discountPercentage }),
       'Per / PCS': item.unit,
       'Net Rate': item.netRate,
       'Stock': item.stock ?? 100,
@@ -679,7 +648,6 @@ export const PriceListPage: FC = () => {
       { wch: 36 },
       { wch: 20 },
       { wch: 18 },
-      { wch: 16 },
       { wch: 12 },
       { wch: 14 },
       { wch: 10 },
